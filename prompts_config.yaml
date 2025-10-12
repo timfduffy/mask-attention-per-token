@@ -1,0 +1,64 @@
+# Configuration file for batch prompt analysis
+# Each prompt will be analyzed independently and saved to its own output files
+
+model:
+  # Path to the model (can be overridden with --model command line arg)
+  path: "H:\\Models\\huggingface\\hub\\models--Qwen--Qwen3-4B-Instruct-2507\\snapshots\\cdbee75f17c01a7cc42f958dc650907174af0554"
+  
+device: "auto"  # "auto", "cuda", or "cpu"
+
+prompts:
+  # Example 1
+  - name: "relative_ages"
+    prompt: |
+      <|im_start|>user
+      If Alice is older than Bob, and Bob is younger than Carol, who is youngest? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    
+  # Example 2
+  - name: "alphabetical_order"
+    prompt: |
+      <|im_start|>user
+      Which comes third alphabetically: zebra, apple, mango, banana? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    
+  # Example 3
+  - name: "math_problem"
+    prompt: |
+      <|im_start|>user
+      What is 15 minus 7 plus 4? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    
+  # Example 4
+  - name: "family_relation"
+    prompt: |
+      <|im_start|>user
+      What do you call your maternal grandmother's son's sister's daughter? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    
+  # Example 5
+  - name: "mammal_in_water"
+    prompt: |
+      <|im_start|>user
+      Which of these is NOT a mammal AND lives in water: whale, dolphin, shark, seal, octopus? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    
+  # Example 6
+  - name: "math_order"
+    prompt: |
+      <|im_start|>user
+      A store sells apples for $3 per pound. If Sarah buys 4 pounds but has a $5 coupon, how much does she pay? Be brief.<|im_end|>
+      <|im_start|>assistant
+
+    num_tokens: 10
+    

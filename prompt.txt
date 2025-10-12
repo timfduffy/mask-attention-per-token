@@ -1,0 +1,3 @@
+<|im_start|>user
+Which of these animals has the longest lifespan, dog, cat, bird, fish?<|im_end|>
+<|im_start|>assistant

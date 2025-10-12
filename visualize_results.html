@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Token Masking Results Viewer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 100%;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .controls {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+        }
+        input[type="file"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+            cursor: pointer;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .toggle-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        .toggle-btn {
+            padding: 8px 16px;
+            border: 2px solid #007bff;
+            background-color: white;
+            color: #007bff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .toggle-btn.active {
+            background-color: #007bff;
+            color: white;
+        }
+        .table-container {
+            overflow: auto;
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 70vh;
+            position: relative;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 6px 8px;
+            text-align: center;
+            line-height: 1.2;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+            font-weight: 600;
+            position: sticky;
+            z-index: 3;
+        }
+        th.token-header {
+            background-color: #0056b3;
+            top: 0;
+            z-index: 5;
+        }
+        th.row-header {
+            background-color: #28a745;
+            text-align: left;
+            min-width: 150px;
+            left: 0;
+            z-index: 4;
+        }
+        th.token-header.row-header {
+            z-index: 5;
+        }
+        tr:first-child th {
+            top: 0;
+        }
+        tr:nth-child(2) th {
+            top: 22px;
+        }
+        tr:first-child th.row-header,
+        tr:nth-child(2) th.row-header {
+            left: 0;
+            position: sticky;
+        }
+        td.row-label {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            text-align: left;
+            white-space: nowrap;
+            position: sticky;
+            left: 0;
+            z-index: 2;
+        }
+        td.value {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+        }
+        /* Fine-grained heatmap: 20 classes for smooth gradient */
+        .heatmap-0 { background-color: #ffffff; }
+        .heatmap-1 { background-color: #fff5f5; }
+        .heatmap-2 { background-color: #ffebeb; }
+        .heatmap-3 { background-color: #ffe0e0; }
+        .heatmap-4 { background-color: #ffd6d6; }
+        .heatmap-5 { background-color: #ffcccc; }
+        .heatmap-6 { background-color: #ffc2c2; }
+        .heatmap-7 { background-color: #ffb8b8; }
+        .heatmap-8 { background-color: #ffadad; }
+        .heatmap-9 { background-color: #ffa3a3; }
+        .heatmap-10 { background-color: #ff9999; }
+        .heatmap-11 { background-color: #ff8f8f; }
+        .heatmap-12 { background-color: #ff8585; }
+        .heatmap-13 { background-color: #ff7a7a; }
+        .heatmap-14 { background-color: #ff7070; }
+        .heatmap-15 { background-color: #ff6666; }
+        .heatmap-16 { background-color: #ff5c5c; }
+        .heatmap-17 { background-color: #ff5252; }
+        .heatmap-18 { background-color: #ff4747; }
+        .heatmap-19 { background-color: #ff3d3d; color: white; }
+        .heatmap-20 { background-color: #ff3333; color: white; font-weight: 600; }
+        .info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #e7f3ff;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+        }
+        .error {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #ffe5e5;
+            border-left: 4px solid #ff3333;
+            border-radius: 4px;
+            color: #cc0000;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔬 Token Masking Results Viewer</h1>
+        <p>Visualize how masking each token affects the residual stream updates at each layer.</p>
+        <p style="font-size: 0.9em; color: #666;">💡 Heatmap colors are relative to the <strong>maximum value in each row</strong> (layer), making it easy to identify the most impactful tokens per layer.</p>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="csvFile">Load Data:</label>
+                <input type="file" id="csvFile" accept=".json,.csv">
+            </div>
+            
+            <div class="control-group">
+                <label>Metric:</label>
+                <div class="toggle-buttons">
+                    <button class="toggle-btn active" data-metric="l2">L2 Distance</button>
+                    <button class="toggle-btn" data-metric="cosine">Cosine Distance</button>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <label for="stepSelect">Generation Step:</label>
+                <select id="stepSelect">
+                    <option value="all">All Steps</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="variantSelect">Variant:</label>
+                <select id="variantSelect">
+                    <option value="Full">Full</option>
+                    <option value="Attn">Attention Only</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="heatmapToggle" checked>
+                    Heatmap Coloring
+                </label>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="excludeFirstToken" checked>
+                    Exclude Pos 0 from Scale
+                </label>
+            </div>
+            
+            <div class="control-group">
+                <label for="scalingSelect">Scaling:</label>
+                <select id="scalingSelect">
+                    <option value="linear">Linear</option>
+                    <option value="sqrt">Square Root</option>
+                </select>
+            </div>
+        </div>
+        
+        <div id="info" class="info" style="display: none;"></div>
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="tableContainer" class="table-container">
+            <div class="loading">👆 Load a JSON or CSV file to begin (JSON is 10x faster!)</div>
+        </div>
+    </div>
+
+    <script>
+        let data = [];
+        let currentMetric = 'l2';
+        let currentVariant = 'Full';
+        let currentStep = 'all';
+        let heatmapEnabled = true;
+        let heatmapScaling = 'linear';
+        let excludeFirstToken = true;
+
+        // Toggle metric buttons
+        document.querySelectorAll('.toggle-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentMetric = this.dataset.metric;
+                renderTable();
+            });
+        });
+
+        // Step selector
+        document.getElementById('stepSelect').addEventListener('change', function() {
+            currentStep = this.value;
+            renderTable();
+        });
+
+        // Variant selector
+        document.getElementById('variantSelect').addEventListener('change', function() {
+            currentVariant = this.value;
+            renderTable();
+        });
+
+        // Heatmap toggle
+        document.getElementById('heatmapToggle').addEventListener('change', function() {
+            heatmapEnabled = this.checked;
+            renderTable();
+        });
+
+        // Exclude first token toggle
+        document.getElementById('excludeFirstToken').addEventListener('change', function() {
+            excludeFirstToken = this.checked;
+            renderTable();
+        });
+
+        // Scaling selector
+        document.getElementById('scalingSelect').addEventListener('change', function() {
+            heatmapScaling = this.value;
+            renderTable();
+        });
+
+        // File input
+        document.getElementById('csvFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const startTime = performance.now();
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const text = event.target.result;
+                    
+                    if (file.name.endsWith('.json')) {
+                        // Fast JSON parsing
+                        try {
+                            data = JSON.parse(text);
+                            const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
+                            showInfo(`Loaded ${data.length} rows from JSON in ${loadTime}s`);
+                            populateDropdowns();
+                            renderTable();
+                        } catch (err) {
+                            showError(`Error parsing JSON: ${err.message}`);
+                        }
+                    } else {
+                        // CSV parsing (slower)
+                        parseCSV(text);
+                        const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
+                        showInfo(`Loaded ${data.length} rows from CSV in ${loadTime}s`);
+                    }
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        function parseCSV(csvText) {
+            // Proper CSV parsing that handles quoted fields with newlines
+            data = [];
+            const lines = [];
+            let currentLine = '';
+            let inQuotes = false;
+            
+            // First, split into lines respecting quotes
+            for (let i = 0; i < csvText.length; i++) {
+                const char = csvText[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                    currentLine += char;
+                } else if (char === '\n' && !inQuotes) {
+                    if (currentLine.trim()) {
+                        lines.push(currentLine);
+                    }
+                    currentLine = '';
+                } else {
+                    currentLine += char;
+                }
+            }
+            if (currentLine.trim()) {
+                lines.push(currentLine);
+            }
+            
+            if (lines.length === 0) {
+                showError('No data found in CSV');
+                return;
+            }
+            
+            const headers = parseCSVLine(lines[0]);
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseCSVLine(lines[i]);
+                if (values.length === headers.length) {
+                    const row = {};
+                    headers.forEach((header, index) => {
+                        row[header.trim()] = values[index].trim();
+                    });
+                    data.push(row);
+                }
+            }
+            
+            populateDropdowns();
+            renderTable();
+        }
+        
+        function populateDropdowns() {
+            // Populate step dropdown
+            const steps = [...new Set(data.map(d => parseInt(d.generation_step)))].sort((a, b) => a - b);
+            const stepSelect = document.getElementById('stepSelect');
+            stepSelect.innerHTML = '<option value="all">All Steps</option>' + 
+                steps.map(s => `<option value="${s}">Step ${s}</option>`).join('');
+            
+            // Populate variant dropdown
+            const variants = [...new Set(data.map(d => d.variant))].sort();
+            const variantSelect = document.getElementById('variantSelect');
+            variantSelect.innerHTML = variants.map(v => 
+                `<option value="${v}">${v}</option>`
+            ).join('');
+            currentVariant = variants[0];
+        }
+        
+        function parseCSVLine(line) {
+            // Parse CSV line handling quotes and commas within fields
+            const result = [];
+            let current = '';
+            let inQuotes = false;
+            
+            for (let i = 0; i < line.length; i++) {
+                const char = line[i];
+                
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(current);
+                    current = '';
+                } else {
+                    current += char;
+                }
+            }
+            result.push(current);
+            
+            return result;
+        }
+
+        function renderTable() {
+            if (data.length === 0) return;
+            
+            const startTime = performance.now();
+            
+            // Filter data by current variant and step
+            let filteredData = data.filter(d => d.variant === currentVariant);
+            
+            if (currentStep !== 'all') {
+                filteredData = filteredData.filter(d => parseInt(d.generation_step) === parseInt(currentStep));
+            }
+            
+            if (filteredData.length === 0) {
+                showError(`No data found for variant: ${currentVariant}`);
+                return;
+            }
+            
+            // Get unique values
+            const tokenPositions = [...new Set(filteredData.map(d => parseInt(d.token_position)))].sort((a, b) => a - b);
+            const genSteps = [...new Set(filteredData.map(d => parseInt(d.generation_step)))].sort((a, b) => a - b);
+            const layers = [...new Set(filteredData.map(d => parseInt(d.layer)))].sort((a, b) => a - b);
+            
+            // Create ALL token positions from 0 to max (to show missing positions)
+            const maxPos = Math.max(...tokenPositions);
+            const allPositions = Array.from({length: maxPos + 1}, (_, i) => i);
+            
+            // Build token map (position -> token text)
+            const tokenMap = {};
+            filteredData.forEach(d => {
+                const pos = parseInt(d.token_position);
+                if (!(pos in tokenMap)) {
+                    tokenMap[pos] = d.token_masked;
+                }
+            });
+            
+            // Pre-calculate max value per row (Step/Layer combination) for fast heatmap
+            const rowMaxValues = {};
+            genSteps.forEach(step => {
+                layers.forEach(layer => {
+                    let maxVal = 0;
+                    allPositions.forEach(pos => {
+                        // Skip position 0 if excludeFirstToken is enabled
+                        if (excludeFirstToken && pos === 0) return;
+                        
+                        const row = filteredData.find(d => 
+                            parseInt(d.generation_step) === step &&
+                            parseInt(d.layer) === layer &&
+                            parseInt(d.token_position) === pos
+                        );
+                        if (row) {
+                            const val = parseFloat(currentMetric === 'l2' ? row.l2_distance : row.cosine_distance);
+                            if (!isNaN(val) && val > maxVal) {
+                                maxVal = val;
+                            }
+                        }
+                    });
+                    rowMaxValues[`${step}_${layer}`] = maxVal;
+                });
+            });
+            
+            // Build table
+            let html = '<table>';
+            
+            // Header row 1: Token text
+            html += '<tr>';
+            html += '<th class="row-header">Step / Layer</th>';
+            allPositions.forEach(pos => {
+                const rawToken = tokenMap[pos];
+                let displayToken;
+                let tooltipText;
+                
+                if (rawToken === undefined) {
+                    // Position doesn't exist in CSV at all
+                    displayToken = `Pos ${pos} (no data)`;
+                    tooltipText = `Position ${pos}: No data in CSV`;
+                } else if (rawToken === '' || rawToken === '\n' || rawToken === '\\n') {
+                    // Empty string in CSV = newline token
+                    displayToken = '↵';
+                    tooltipText = `Position ${pos}: newline`;
+                } else if (rawToken.trim() === '') {
+                    // Spaces
+                    displayToken = `[space]`;
+                    tooltipText = `Position ${pos}: "${rawToken}" (${rawToken.length} chars)`;
+                } else {
+                    // Regular token
+                    displayToken = rawToken;
+                    tooltipText = `Position ${pos}: "${rawToken}"`;
+                }
+                
+                html += `<th class="token-header" title="${escapeHtml(tooltipText)}">${escapeHtml(displayToken)}</th>`;
+            });
+            html += '</tr>';
+            
+            // Header row 2: Token positions
+            html += '<tr>';
+            html += '<th class="row-header">Position</th>';
+            allPositions.forEach(pos => {
+                html += `<th>${pos}</th>`;
+            });
+            html += '</tr>';
+            
+            // Data rows: grouped by generation step, then layer
+            genSteps.forEach(step => {
+                layers.forEach(layer => {
+                    html += '<tr>';
+                    html += `<td class="row-label">Step ${step} / Layer ${layer}</td>`;
+                    
+                    allPositions.forEach(pos => {
+                        const row = filteredData.find(d => 
+                            parseInt(d.generation_step) === step &&
+                            parseInt(d.layer) === layer &&
+                            parseInt(d.token_position) === pos
+                        );
+                        
+                        if (row) {
+                            const value = parseFloat(currentMetric === 'l2' ? row.l2_distance : row.cosine_distance);
+                            
+                            if (isNaN(value)) {
+                                html += `<td class="value" title="Invalid value">NaN</td>`;
+                            } else {
+                                const formattedValue = value.toFixed(2);
+                                const rowKey = `${step}_${layer}`;
+                                const rowMax = rowMaxValues[rowKey];
+                                const heatmapClass = heatmapEnabled ? getHeatmapClassByRow(value, rowMax, heatmapScaling) : '';
+                                html += `<td class="value ${heatmapClass}" title="Step ${step}, Layer ${layer}, Pos ${pos}: ${value}">${formattedValue}</td>`;
+                            }
+                        } else {
+                            html += '<td class="value">-</td>';
+                        }
+                    });
+                    
+                    html += '</tr>';
+                });
+            });
+            
+            html += '</table>';
+            
+            document.getElementById('tableContainer').innerHTML = html;
+            
+            const renderTime = ((performance.now() - startTime) / 1000).toFixed(2);
+            showInfo(`Showing ${filteredData.length} rows (rendered in ${renderTime}s)`);
+        }
+
+        function getHeatmapClassByRow(value, rowMax, scaling) {
+            // Fast row-based heatmap coloring with fine gradation (0-20)
+            if (!rowMax || rowMax === 0 || value === 0) return 'heatmap-0';
+            
+            // Calculate ratio (0 to 1)
+            let ratio = value / rowMax;
+            
+            // Apply scaling function
+            if (scaling === 'sqrt') {
+                // Square root: emphasizes low values more, compresses high values
+                ratio = Math.sqrt(ratio);
+            }
+            // Linear is default (no transformation)
+            
+            // Map to 0-20 class range
+            const classNum = Math.min(20, Math.floor(ratio * 20));
+            return `heatmap-${classNum}`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showInfo(message) {
+            const infoDiv = document.getElementById('info');
+            infoDiv.textContent = message;
+            infoDiv.style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('info').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
+
