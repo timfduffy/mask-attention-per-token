@@ -1,5 +1,8 @@
 # Configuration file for batch prompt analysis
 # Each prompt will be analyzed independently and saved to its own output files
+#
+# Note: Generation automatically stops when the model outputs <|im_end|> or EOS token,
+#       so you can set num_tokens generously (e.g., 50) for short answers
 
 model:
   # Path to the model (can be overridden with --model command line arg)
@@ -8,8 +11,8 @@ model:
 device: "auto"  # "auto", "cuda", or "cpu"
 
 prompts:
-  # Example 1
   - name: "relative_ages"
+    enabled: false
     prompt: |
       <|im_start|>user
       If Alice is older than Bob, and Bob is younger than Carol, who is youngest? Be brief.<|im_end|>
@@ -17,8 +20,8 @@ prompts:
 
     num_tokens: 10
     
-  # Example 2
   - name: "alphabetical_order"
+    enabled: false
     prompt: |
       <|im_start|>user
       Which comes third alphabetically: zebra, apple, mango, banana? Be brief.<|im_end|>
@@ -26,39 +29,177 @@ prompts:
 
     num_tokens: 10
     
-  # Example 3
   - name: "math_problem"
+    enabled: true
     prompt: |
       <|im_start|>user
-      What is 15 minus 7 plus 4? Be brief.<|im_end|>
+      What is 15 minus 7 plus 4? Just give the answer.<|im_end|>
       <|im_start|>assistant
 
     num_tokens: 10
     
-  # Example 4
   - name: "family_relation"
+    enabled: true
     prompt: |
       <|im_start|>user
-      What do you call your maternal grandmother's son's sister's daughter? Be brief.<|im_end|>
+      What do you call your maternal grandmother's son's sister's daughter? Be very brief.<|im_end|>
       <|im_start|>assistant
 
-    num_tokens: 10
+    num_tokens: 20
     
-  # Example 5
   - name: "mammal_in_water"
+    enabled: true
     prompt: |
       <|im_start|>user
-      Which of these is NOT a mammal AND lives in water: whale, dolphin, shark, seal, octopus? Be brief.<|im_end|>
+      Which of these is NOT a mammal AND lives in water: whale, dolphin, tortoise, seal, octopus? Be very brief.<|im_end|>
       <|im_start|>assistant
 
-    num_tokens: 10
+    num_tokens: 20
     
-  # Example 6
   - name: "math_order"
+    enabled: true
     prompt: |
       <|im_start|>user
-      A store sells apples for $3 per pound. If Sarah buys 4 pounds but has a $5 coupon, how much does she pay? Be brief.<|im_end|>
+      A store sells apples for $3 per pound. If Sarah buys 4 pounds but has a $5 coupon, how much does she pay? Just give the answer.<|im_end|>
       <|im_start|>assistant
 
-    num_tokens: 10
+    num_tokens: 20
     
+  - name: "multi_constraint_intersection"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Which city is: in Europe, on the Mediterranean, capital of its country, and starts with 'A'? Just the city.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "conditional_cascade"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      If Alice goes, Bob stays. If Bob stays, Carol goes. If Carol goes, Dan stays. Alice goes. Does Dan go or stay? One word.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "numerical_dependencies"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Book A costs twice Book B. Book B costs $3 more than Book C. Book C is $7. How much for Book A? Just the number.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "property_composition"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      What is the capital of the largest country by area that borders both China and has Russian as an official language? Just the city.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "chained_constraints"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Five people sit in a row: Anna, Bob, Carol, Dave, Emma. Anna sits left of Bob. Bob sits left of Carol. Dave sits right of everyone. Where does Emma sit? Be brief.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 15
+
+  - name: "negative_constraints"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      List animals from: cat, spider, eagle, salmon, snake. Must have legs, must NOT have wings, must NOT be aquatic. Be brief.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 15
+
+  - name: "contextual_word"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      The bank of the river was muddy. The bank called about my mortgage. In the first sentence, what does 'bank' mean?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 20
+
+  - name: "pronoun_resolution"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Eileen told Jennifer that they disagreed with the proposal, but she defended it anyway. Who defended the proposal?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "conditional_chain"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      If the temperature drops below 32°F, pipes freeze. If pipes freeze, the heating system fails. It's currently 28°F. What will happen to the heating system?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 20
+
+  - name: "pronoun_reference_chain"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Jennifer told Mark that Susan called about the project. He said he would talk to her about it, but she mentioned that she had already discussed it with the client. The client told her that they wanted to proceed, so she informed him that they should schedule a kickoff. Who needs to schedule the kickoff meeting?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 15
+
+  - name: "constraint_satisfaction"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      I need a gift for someone who loves reading, hates technology, and has a small apartment. Which would be best: a Kindle, a bookshelf, a lamp, or a book? Be brief.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 15
+
+  - name: "temporal_reasoning"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      The concert starts at 8pm. It takes 45 minutes to get there, and I need 30 minutes to get ready. If it's now 6:20pm, do I have enough time? Just say yes or no and why briefly.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+
+  - name: "transitive_property"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Building A is taller than Building B. Building C is shorter than Building B. Building D is taller than Building A. List the buildings from tallest to shortest.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 20
+
+  - name: "quantity_reasoning"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      A recipe feeds 4 people and calls for 3 eggs. I'm cooking for 10 people but only have 6 eggs. Do I have enough eggs? Say yes or no and briefly why.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 20
+
+  - name: "rl_algorithm_complexity"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Do RL algorithms like GRPO use a more complicated algorithm than normal pretraining?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 40
+
+  - name: "dft_exchange_correlation_functional"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Can you explain the exchange correlation functional in DFT?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 40
+
+  - name: "image_tokens_vs_text_tokens"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      In LLMs with vision input, are image tokens a lot like text tokens except for the fact that their embeddings are continuous rather than discrete?<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 40
+
+
+

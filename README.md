@@ -31,31 +31,41 @@ Test on just the first layer to verify everything works:
 python test_single_layer.py
 ```
 
-### Full Experiment
+### Batch Mode (Recommended)
 
-Run the complete analysis:
+Process multiple prompts at once using a YAML config file:
 
 ```bash
-python mask_impact_analysis.py [num_output_tokens]
+python mask_impact_analysis.py --config prompts_config.yaml
 ```
 
-Examples:
+Edit `prompts_config.yaml` to:
+- Add/remove prompts
+- Enable/disable prompts with `enabled: true/false`
+- Set different `num_tokens` for each prompt
+- See `BATCH_MODE_GUIDE.md` for full documentation
+
+**Benefits**:
+- Run overnight experiments with multiple prompts
+- Easy to organize and version control your experiments
+- Each prompt gets its own output files (named by prompt name)
+
+### Single Prompt Mode
+
+Run a single analysis:
+
 ```bash
-# Generate and show 1 output token (default)
-python mask_impact_analysis.py
+# From prompt.txt (default)
+python mask_impact_analysis.py --num-tokens 10
 
-# Generate and show 20 output tokens
-python mask_impact_analysis.py 20
+# Inline prompt
+python mask_impact_analysis.py --prompt "The capital of France is" --num-tokens 5
+
+# Custom output name
+python mask_impact_analysis.py --prompt "test" --output my_experiment --num-tokens 3
 ```
 
-This will:
-- Load your local Qwen3-0.6B model
-- Read the prompt from `prompt.txt` (or use default if not found)
-- Test each token at each layer
-- Generate `masking_results.csv` with all measurements
-- Show what the model would generate (without masking) for the specified number of tokens
-
-**Note**: Create a `prompt.txt` file with your desired prompt. The entire file content will be used as the prompt, including any special tokens or formatting.
+**Note**: All output files are saved to the `output/` directory (automatically created).
 
 ### Custom Usage
 
@@ -81,9 +91,9 @@ df.to_csv("results.csv", index=False)
 
 ## Output Format
 
-The analysis generates two output files:
-- **`masking_results.csv`** - For spreadsheet analysis
-- **`masking_results.json`** - For fast web visualization (recommended)
+The analysis generates two output files in the `output/` directory:
+- **`output/{name}_results.csv`** - For spreadsheet analysis
+- **`output/{name}_results.json`** - For fast web visualization (recommended)
 
 Both contain the same data in long format with the following columns:
 - `generation_step`: Which output token is being predicted (0 = initial prompt, 1 = after 1st generated token, etc.)
@@ -105,17 +115,27 @@ Both contain the same data in long format with the following columns:
 Use **`visualize_results.html`** to interactively explore your results:
 
 1. Open `visualize_results.html` in any web browser
-2. Load `masking_results.json` (recommended) or `masking_results.csv`
+2. Load a results file from the `output/` directory:
+   - `output/{name}_results.json` (recommended - 10x faster)
+   - `output/{name}_results.csv` (backup option)
 3. Features:
    - **Toggle metrics**: Switch between L2 and Cosine distance
    - **Filter by step**: View one generation step at a time (much faster!)
    - **Select variant**: Choose Full, Attn, or any Head
-   - **Heatmap colors**: Color-coded by impact intensity
+   - **Heatmap colors**: Row-based intensity with linear/square-root scaling
+   - **Exclude pos 0**: Toggle to exclude attention sink from color scale
    - **Sticky headers**: Scroll through data while keeping headers visible
 
 **Performance**: JSON loads ~10x faster than CSV. For a 165k row dataset:
 - JSON: ~2-3 seconds
 - CSV: ~20-30 seconds
+
+## Early Stopping
+
+Generation automatically stops when the model produces `<|im_end|>` or EOS token:
+- Set generous `num_tokens` values (e.g., 50) without worrying
+- The script stops as soon as the model finishes
+- Saves computation time and keeps analysis focused on real output
 
 ## Implementation Details
 
@@ -170,10 +190,56 @@ This analysis can reveal:
 - How attention vs MLP contributions differ
 - Which attention heads are most affected by specific tokens
 
+## Vision-Language Model Support (NEW! 🎉)
+
+**Qwen3-VL Phase 2b** is now available - mask vision tokens to analyze image patches!
+
+```bash
+# Phase 1: Text-only
+python mask_impact_vl.py --prompt "What is the capital of France?" --num-tokens 5
+
+# Phase 2a: Image + text (masking text only)
+python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --num-tokens 5
+
+# Phase 2b: Image + text (masking vision tokens) - NEW!
+python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --mask-mode vision --num-tokens 3
+
+# Phase 2c: Mask both text and vision
+python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --mask-mode both --num-tokens 1
+
+# Run test suite
+python test_vl_phase1.py
+```
+
+See [`VL_IMPLEMENTATION.md`](VL_IMPLEMENTATION.md) for:
+- Phase 1: Text-only analysis (✅ Complete)
+- Phase 2a: Image + text masking - text only (✅ Complete)
+- Phase 2b: Image + text masking - vision only (✅ Complete)
+- Phase 2c: Image + text masking - both (✅ Complete)
+- Phase 3: Vision encoder analysis (📋 Future)
+
+## Project Structure
+
+```
+mask_impact/
+├── mask_impact_analysis.py      # Text-only models (Qwen3, Llama, etc.)
+├── mask_impact_vl.py            # Vision-language models (Qwen3-VL Phase 1) 🆕
+├── prompts_config.yaml           # Batch mode for text models
+├── prompts_config_vl.yaml       # Batch mode for VL models (text-only) 🆕
+├── visualize_results.html        # Interactive results viewer
+├── BATCH_MODE_GUIDE.md          # Detailed batch mode documentation
+├── VL_IMPLEMENTATION.md         # VL-specific documentation 🆕
+├── test_vl_phase1.py            # VL test suite 🆕
+├── output/                       # All results saved here
+│   ├── {name}_results.csv
+│   └── {name}_results.json
+└── prompt.txt                    # Single prompt (optional)
+```
+
 ## Future Extensions
 
-- Multiple prompts to see if patterns generalize
 - Masking multiple tokens simultaneously
 - Tracking position-specific effects across all positions
 - Comparing accumulated effects across layers
+- Cross-attention analysis for encoder-decoder models
 

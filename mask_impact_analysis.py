@@ -427,6 +427,11 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
     # For each generation step (analyzing progressively longer sequences)
     current_input_ids = input_ids.clone()
     
+    # Get EOS token ID(s) for early stopping
+    eos_token_id = tokenizer.eos_token_id
+    im_end_token = "<|im_end|>"
+    im_end_token_id = tokenizer.encode(im_end_token, add_special_tokens=False)[-1] if im_end_token in tokenizer.get_vocab() else None
+    
     for gen_step in range(num_output_tokens):
         if gen_step > 0:
             # Generate next token
@@ -441,6 +446,13 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                 
                 print(f"\n{'='*70}")
                 print(f"Generation step {gen_step}: Generated token '{predicted_token}'")
+                
+                # Check for EOS or <|im_end|> token
+                if predicted_token_id == eos_token_id or predicted_token_id == im_end_token_id:
+                    print(f"Stopping early: Generated end token ('{predicted_token}')")
+                    print(f"{'='*70}\n")
+                    break
+                
                 print(f"{'='*70}\n")
         
         # Update tokens and num_tokens for current input
@@ -593,6 +605,7 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
         # Generate multiple tokens autoregressively
         generated_ids = input_ids.clone()
         generated_tokens = []
+        early_stop = False
         
         for step in range(num_output_tokens):
             outputs = masker.model(generated_ids)
@@ -609,6 +622,11 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                 top_k_values, top_k_indices = torch.topk(logits, k=5)
                 top_k_tokens = [tokenizer.decode([idx.item()]) for idx in top_k_indices]
                 top_k_probs = torch.softmax(top_k_values, dim=0)
+            
+            # Check for EOS or <|im_end|> token
+            if predicted_token_id == eos_token_id or predicted_token_id == im_end_token_id:
+                early_stop = True
+                break
         
         print(f"Input prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
         
@@ -619,11 +637,15 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                 print(f"  {i}. '{token}' (prob: {prob:.4f})")
         else:
             full_generation = ''.join(generated_tokens)
-            print(f"\nGenerated sequence ({num_output_tokens} tokens):")
+            actual_tokens = len(generated_tokens)
+            stop_msg = f" (stopped early at {actual_tokens} tokens)" if early_stop else ""
+            print(f"\nGenerated sequence ({actual_tokens}/{num_output_tokens} tokens{stop_msg}):")
             print(f"  {full_generation}")
             print(f"\nToken-by-token:")
             for i, token in enumerate(generated_tokens, 1):
                 print(f"  {i}. '{token}'")
+            if early_stop:
+                print(f"\n⚠ Generation stopped early: Model generated end token")
             if num_output_tokens > 0:
                 print(f"\nTop 5 predictions for first token:")
                 for i, (token, prob) in enumerate(zip(top_k_tokens, top_k_probs), 1):
@@ -638,6 +660,11 @@ if __name__ == '__main__':
     import argparse
     import yaml
     import os
+    from pathlib import Path
+    
+    # Create output directory if it doesn't exist
+    output_dir = Path('output')
+    output_dir.mkdir(exist_ok=True)
     
     parser = argparse.ArgumentParser(
         description='Analyze token masking impact on transformer models',
@@ -696,9 +723,20 @@ Examples:
             print("Error: No prompts found in config file")
             sys.exit(1)
         
-        print(f"Found {len(prompts)} prompt(s) to process\n")
+        # Filter to only enabled prompts
+        enabled_prompts = [p for p in prompts if p.get('enabled', True)]
+        disabled_count = len(prompts) - len(enabled_prompts)
         
-        for idx, prompt_config in enumerate(prompts, 1):
+        if disabled_count > 0:
+            print(f"Found {len(prompts)} prompt(s) total ({len(enabled_prompts)} enabled, {disabled_count} disabled)\n")
+        else:
+            print(f"Found {len(enabled_prompts)} prompt(s) to process\n")
+        
+        if not enabled_prompts:
+            print("Error: All prompts are disabled")
+            sys.exit(1)
+        
+        for idx, prompt_config in enumerate(enabled_prompts, 1):
             name = prompt_config.get('name', f'prompt_{idx}')
             prompt_text = prompt_config.get('prompt', '')
             num_tokens = prompt_config.get('num_tokens', 1)
@@ -708,12 +746,12 @@ Examples:
                 try:
                     with open(prompt_text, 'r', encoding='utf-8') as f:
                         prompt_text = f.read()
-                    print(f"[{idx}/{len(prompts)}] Processing '{name}' (loaded from {prompt_config.get('prompt')})")
+                    print(f"[{idx}/{len(enabled_prompts)}] Processing '{name}' (loaded from {prompt_config.get('prompt')})")
                 except Exception as e:
                     print(f"Error loading {prompt_text}: {e}")
                     continue
             else:
-                print(f"[{idx}/{len(prompts)}] Processing '{name}'")
+                print(f"[{idx}/{len(enabled_prompts)}] Processing '{name}'")
             
             print(f"  Prompt length: {len(prompt_text)} chars")
             print(f"  Generating: {num_tokens} token(s)")
@@ -726,9 +764,9 @@ Examples:
                 num_output_tokens=num_tokens
             )
             
-            # Save with custom name
-            csv_file = f'{name}_results.csv'
-            json_file = f'{name}_results.json'
+            # Save with custom name in output directory
+            csv_file = output_dir / f'{name}_results.csv'
+            json_file = output_dir / f'{name}_results.json'
             
             df.to_csv(csv_file, index=False)
             df.to_json(json_file, orient='records')
@@ -737,7 +775,9 @@ Examples:
             print(f"  Rows: {len(df)}\n")
         
         print(f"{'='*70}")
-        print(f"Batch processing complete! Processed {len(prompts)} prompt(s)")
+        print(f"Batch processing complete! Processed {len(enabled_prompts)} prompt(s)")
+        if disabled_count > 0:
+            print(f"Skipped {disabled_count} disabled prompt(s)")
         print(f"{'='*70}")
     
     # SINGLE PROMPT MODE: Legacy behavior
@@ -776,9 +816,9 @@ Examples:
             num_output_tokens=args.num_tokens
         )
         
-        # Save to output files
-        csv_file = f'{args.output}.csv'
-        json_file = f'{args.output}.json'
+        # Save to output files in output directory
+        csv_file = output_dir / f'{args.output}.csv'
+        json_file = output_dir / f'{args.output}.json'
         
         df.to_csv(csv_file, index=False)
         df.to_json(json_file, orient='records')

@@ -33,10 +33,12 @@ device: "auto"  # "auto", "cuda", or "cpu"
 
 prompts:
   - name: "experiment1"
+    enabled: true  # Optional: defaults to true if omitted
     prompt: "Your prompt text here"
     num_tokens: 5
     
   - name: "experiment2"
+    enabled: false  # Set to false to skip this prompt
     prompt: "prompt.txt"  # Load from file
     num_tokens: 10
     
@@ -50,22 +52,24 @@ prompts:
 
 ## Output Files
 
+All output files are automatically saved to the `output/` directory (created if it doesn't exist).
+
 ### Batch Mode
 Each prompt generates its own files:
-- `{name}_results.csv` - Spreadsheet-friendly format
-- `{name}_results.json` - Fast loading for visualization
+- `output/{name}_results.csv` - Spreadsheet-friendly format
+- `output/{name}_results.json` - Fast loading for visualization
 
-Example: `experiment1_results.csv`, `experiment1_results.json`
+Example: `output/experiment1_results.csv`, `output/experiment1_results.json`
 
 ### Single Prompt Mode
 Default files:
-- `masking_results.csv`
-- `masking_results.json`
+- `output/masking_results.csv`
+- `output/masking_results.json`
 
 Or custom name with `--output`:
 ```bash
 python mask_impact_analysis.py --prompt "test" --output my_experiment
-# Creates: my_experiment.csv, my_experiment.json
+# Creates: output/my_experiment.csv, output/my_experiment.json
 ```
 
 ## Command Line Options
@@ -101,6 +105,21 @@ python mask_impact_analysis.py --config prompts_config.yaml --device cpu
 python mask_impact_analysis.py --config prompts_config.yaml --model "Qwen/Qwen3-0.6B"
 ```
 
+## Early Stopping
+
+The script automatically stops generation when the model produces an end-of-sequence token (`<|im_end|>` or EOS). This:
+- Saves computation time
+- Makes analysis more realistic (no need to analyze padding tokens)
+- Works even if you set `num_tokens: 100` - it'll stop when the model says it's done
+
+Example output:
+```
+Generated sequence (5/20 tokens, stopped early at 5 tokens):
+  The answer is 12.<|im_end|>
+
+⚠ Generation stopped early: Model generated end token
+```
+
 ## Tips
 
 1. **Start small**: Test with `num_tokens: 1` first to check performance
@@ -108,4 +127,7 @@ python mask_impact_analysis.py --config prompts_config.yaml --model "Qwen/Qwen3-
 3. **Reuse prompts**: Reference the same `.txt` file in multiple config entries with different `num_tokens`
 4. **GPU acceleration**: Use `--device cuda` for faster processing
 5. **Visualization**: Load the generated JSON files into `visualize_results.html` for interactive exploration
+6. **Toggle experiments**: Use `enabled: false` to temporarily skip prompts without deleting them from the config
+7. **Iterative testing**: Start by enabling only 1-2 prompts, verify results, then enable more
+8. **Set generous `num_tokens`**: Don't worry about setting exact lengths - early stopping will handle it (e.g., use `num_tokens: 50` for short answers)
 

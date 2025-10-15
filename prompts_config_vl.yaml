@@ -1,0 +1,43 @@
+# Configuration file for Qwen3-VL batch prompt analysis
+# Phase 1: Text-only inputs (no images yet)
+#
+# Note: Generation automatically stops when the model outputs <|im_end|> or EOS token,
+#       so you can set num_tokens generously (e.g., 50) for short answers
+
+model:
+  # Path to the model (can be overridden with --model command line arg)
+  path: "Qwen/Qwen3-VL-4B-Instruct"
+  
+device: "auto"  # "auto", "cuda", or "cpu"
+
+prompts:
+  # Example 1: Simple factual question
+  - name: "capital_france"
+    enabled: true
+    prompt: "What is the capital of France?"
+    num_tokens: 5
+  
+  # Example 2: Multi-step reasoning
+  - name: "math_problem"
+    enabled: true
+    prompt: "If Alice has 3 apples and Bob gives her 5 more, how many apples does Alice have? Just give the answer."
+    num_tokens: 10
+  
+  # Example 3: Chat format (VL model supports this)
+  - name: "animal_facts"
+    enabled: false  # Disable for initial testing
+    prompt: |
+      <|im_start|>user
+      Which animal is the largest: elephant, whale, or giraffe? Be brief.<|im_end|>
+      <|im_start|>assistant
+    num_tokens: 10
+  
+  # Example 4: Simple completion
+  - name: "paris_completion"
+    enabled: true
+    prompt: "The Eiffel Tower is located in"
+    num_tokens: 3
+  
+  # Add more text-only prompts for testing...
+  # Phase 2 will add image inputs!
+
