@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VL Grid Viewer - Image Token Analysis</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .info-bar {
+            background-color: #e7f3ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007bff;
+        }
+        .current-view {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+        .metric-badge {
+            background-color: #007bff;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 15px;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        input[type="file"] {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .keyboard-help {
+            background-color: #fff5e6;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+        .keyboard-help strong {
+            color: #ff6600;
+        }
+        .visualization {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+        .section {
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #555;
+            font-size: 1.2em;
+        }
+        .grid-container {
+            position: relative;
+            display: inline-block;
+            margin-top: 15px;
+        }
+        .image-grid {
+            display: grid;
+            gap: 0;
+            border: 2px solid #666;
+            position: relative;
+            z-index: 2;
+        }
+        .image-token {
+            aspect-ratio: 1 / 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #999;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 50px;
+            min-height: 50px;
+            background-color: rgba(255, 255, 255, 0.85);
+        }
+        .overlay-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+            border: 2px solid #666;
+            object-fit: cover;
+        }
+        .image-token.transparent {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        .image-token.transparent:hover {
+            background-color: rgba(255, 255, 255, 0.6);
+        }
+        .image-token:hover {
+            transform: scale(1.05);
+            border-color: #333;
+            z-index: 10;
+        }
+        .token-label {
+            font-size: 10px;
+            color: #666;
+        }
+        .text-tokens {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 15px;
+        }
+        .text-token {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.1s;
+            min-width: 50px;
+            text-align: center;
+        }
+        .text-token:hover {
+            transform: scale(1.05);
+            border-color: #333;
+        }
+        .token-info {
+            font-size: 10px;
+            color: #666;
+            margin-top: 3px;
+        }
+        /* Heatmap colors - 20 levels for smooth gradient */
+        .heatmap-0 { background-color: #ffffff; }
+        .heatmap-1 { background-color: #fff5f5; }
+        .heatmap-2 { background-color: #ffebeb; }
+        .heatmap-3 { background-color: #ffe0e0; }
+        .heatmap-4 { background-color: #ffd6d6; }
+        .heatmap-5 { background-color: #ffcccc; }
+        .heatmap-6 { background-color: #ffc2c2; }
+        .heatmap-7 { background-color: #ffb8b8; }
+        .heatmap-8 { background-color: #ffadad; }
+        .heatmap-9 { background-color: #ffa3a3; }
+        .heatmap-10 { background-color: #ff9999; }
+        .heatmap-11 { background-color: #ff8f8f; }
+        .heatmap-12 { background-color: #ff8585; }
+        .heatmap-13 { background-color: #ff7a7a; }
+        .heatmap-14 { background-color: #ff7070; }
+        .heatmap-15 { background-color: #ff6666; }
+        .heatmap-16 { background-color: #ff5c5c; }
+        .heatmap-17 { background-color: #ff5252; }
+        .heatmap-18 { background-color: #ff4747; }
+        .heatmap-19 { background-color: #ff3d3d; color: white; }
+        .heatmap-20 { background-color: #ff3333; color: white; }
+        .error {
+            padding: 15px;
+            background-color: #ffe5e5;
+            border-left: 4px solid #ff3333;
+            border-radius: 4px;
+            color: #cc0000;
+            margin: 20px 0;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 1.1em;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+            font-size: 0.9em;
+        }
+        .stat-item {
+            background-color: white;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        .stat-label {
+            color: #666;
+            font-size: 0.85em;
+        }
+        .stat-value {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🖼️ Vision-Language Grid Viewer</h1>
+        <p>Specialized viewer for analyzing image token masking effects in a 2D grid layout.</p>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="fileInput">Load Parquet:</label>
+                <input type="file" id="fileInput" accept=".parquet">
+            </div>
+            
+            <div class="control-group">
+                <label for="imageInput">Load Image:</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            
+            <div class="control-group">
+                <label for="metricSelect">Metric:</label>
+                <select id="metricSelect">
+                    <option value="l2_distance">L2 Distance</option>
+                    <option value="cosine_distance">Cosine Distance</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="variantSelect">Variant:</label>
+                <select id="variantSelect">
+                    <option value="Full">Full</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="scalingSelect">Scaling:</label>
+                <select id="scalingSelect">
+                    <option value="linear">Linear</option>
+                    <option value="sqrt">Square Root</option>
+                    <option value="percentile">Percentile</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="excludeFirstImage" checked>
+                    Exclude 1st Image Token
+                </label>
+            </div>
+            
+            <div class="control-group">
+                <label>
+                    <input type="checkbox" id="transparentGrid">
+                    Transparent Grid Overlay
+                </label>
+            </div>
+        </div>
+        
+        <div class="keyboard-help">
+            <strong>⌨️ Keyboard Navigation:</strong>
+            <strong>←/→</strong> Previous/Next Layer | 
+            <strong>↑/↓</strong> Previous/Next Generation Step | 
+            <strong>M</strong> Toggle Metric | 
+            <strong>S</strong> Cycle Scaling (Linear → Sqrt → Percentile)
+        </div>
+        
+        <div class="info-bar">
+            <div class="current-view">
+                <span class="metric-badge" id="metricBadge">L2 Distance</span>
+                <span>Layer: <span id="currentLayer">-</span> / <span id="totalLayers">-</span></span>
+                <span>Step: <span id="currentStep">-</span> / <span id="totalSteps">-</span></span>
+                <span>Variant: <span id="currentVariant">-</span></span>
+                <span>Scaling: <span id="currentScaling">Linear</span></span>
+            </div>
+        </div>
+        
+        <div id="content">
+            <div class="loading">Load a Parquet file to begin...</div>
+        </div>
+    </div>
+
+    <script>
+        let data = [];
+        let currentLayer = 0;
+        let currentStep = 0;
+        let currentMetric = 'l2_distance';
+        let currentVariant = 'Full';
+        let currentScaling = 'linear';
+        let excludeFirstImage = true;
+        let loadedImage = null;
+        let transparentGrid = false;
+        let layers = [];
+        let steps = [];
+        let variants = [];
+        
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                await loadParquetFile(file);
+            }
+        });
+        
+        // Image input handler
+        document.getElementById('imageInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    loadedImage = e.target.result;
+                    renderVisualization();
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        // Control handlers
+        document.getElementById('metricSelect').addEventListener('change', (e) => {
+            currentMetric = e.target.value;
+            document.getElementById('metricBadge').textContent = 
+                currentMetric === 'l2_distance' ? 'L2 Distance' : 'Cosine Distance';
+            render();
+        });
+        
+        document.getElementById('variantSelect').addEventListener('change', (e) => {
+            currentVariant = e.target.value;
+            render();
+        });
+        
+        document.getElementById('scalingSelect').addEventListener('change', (e) => {
+            currentScaling = e.target.value;
+            const scalingText = {
+                'linear': 'Linear',
+                'sqrt': 'Square Root',
+                'percentile': 'Percentile'
+            };
+            document.getElementById('currentScaling').textContent = scalingText[e.target.value];
+            render();
+        });
+        
+        document.getElementById('excludeFirstImage').addEventListener('change', (e) => {
+            excludeFirstImage = e.target.checked;
+            render();
+        });
+        
+        document.getElementById('transparentGrid').addEventListener('change', (e) => {
+            transparentGrid = e.target.checked;
+            render();
+        });
+        
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (data.length === 0) return;
+            
+            switch(e.key) {
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    if (currentLayer > 0) {
+                        currentLayer--;
+                        render();
+                    }
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    if (currentLayer < layers.length - 1) {
+                        currentLayer++;
+                        render();
+                    }
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (currentStep > 0) {
+                        currentStep--;
+                        render();
+                    }
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (currentStep < steps.length - 1) {
+                        currentStep++;
+                        render();
+                    }
+                    break;
+                case 'm':
+                case 'M':
+                    e.preventDefault();
+                    currentMetric = currentMetric === 'l2_distance' ? 'cosine_distance' : 'l2_distance';
+                    document.getElementById('metricSelect').value = currentMetric;
+                    document.getElementById('metricBadge').textContent = 
+                        currentMetric === 'l2_distance' ? 'L2 Distance' : 'Cosine Distance';
+                    render();
+                    break;
+                case 's':
+                case 'S':
+                    e.preventDefault();
+                    // Cycle through scaling options: linear -> sqrt -> percentile -> linear
+                    const scalingOptions = ['linear', 'sqrt', 'percentile'];
+                    const currentIndex = scalingOptions.indexOf(currentScaling);
+                    currentScaling = scalingOptions[(currentIndex + 1) % scalingOptions.length];
+                    document.getElementById('scalingSelect').value = currentScaling;
+                    const scalingText = {
+                        'linear': 'Linear',
+                        'sqrt': 'Square Root',
+                        'percentile': 'Percentile'
+                    };
+                    document.getElementById('currentScaling').textContent = scalingText[currentScaling];
+                    render();
+                    break;
+            }
+        });
+        
+        async function loadParquetFile(file) {
+            const content = document.getElementById('content');
+            content.innerHTML = '<div class="loading">Loading Parquet file...</div>';
+            
+            try {
+                // Import hyparquet
+                const hyparquetModule = await import('https://cdn.jsdelivr.net/npm/hyparquet@1.4.0/+esm');
+                const parquetReadObjects = hyparquetModule.parquetReadObjects;
+                
+                // Read file
+                const arrayBuffer = await file.arrayBuffer();
+                data = await parquetReadObjects({ file: arrayBuffer });
+                
+                console.log(`Loaded ${data.length.toLocaleString()} rows`);
+                
+                // Extract unique values
+                layers = [...new Set(data.map(d => parseInt(d.layer)))].sort((a, b) => a - b);
+                steps = [...new Set(data.map(d => parseInt(d.generation_step)))].sort((a, b) => a - b);
+                variants = [...new Set(data.map(d => d.variant))].sort();
+                
+                // Populate variant dropdown
+                const variantSelect = document.getElementById('variantSelect');
+                variantSelect.innerHTML = variants.map(v => 
+                    `<option value="${v}">${v}</option>`
+                ).join('');
+                
+                // Start at first layer and first step
+                currentLayer = 0;
+                currentStep = 0;
+                currentVariant = variants[0];
+                
+                render();
+                
+            } catch (err) {
+                console.error('Error loading file:', err);
+                content.innerHTML = `<div class="error">Failed to load Parquet file: ${err.message}</div>`;
+            }
+        }
+        
+        function render() {
+            if (data.length === 0) return;
+            
+            // Update info display
+            document.getElementById('currentLayer').textContent = layers[currentLayer];
+            document.getElementById('totalLayers').textContent = layers[layers.length - 1];
+            document.getElementById('currentStep').textContent = steps[currentStep];
+            document.getElementById('totalSteps').textContent = steps[steps.length - 1];
+            document.getElementById('currentVariant').textContent = currentVariant;
+            
+            // Filter data for current layer, step, and variant
+            const filteredData = data.filter(d => 
+                parseInt(d.layer) === layers[currentLayer] &&
+                parseInt(d.generation_step) === steps[currentStep] &&
+                d.variant === currentVariant
+            );
+            
+            if (filteredData.length === 0) {
+                document.getElementById('content').innerHTML = 
+                    '<div class="error">No data found for this layer/step/variant combination.</div>';
+                return;
+            }
+            
+            // Separate image and text tokens
+            // Detect image tokens but exclude special vision control tokens
+            const imageTokens = filteredData.filter(d => {
+                const token = d.token_masked.toLowerCase();
+                // Exclude special vision tokens that aren't part of the grid
+                const isSpecialVision = token === '<vision_start>' || 
+                                       token === '<vision_end>' || 
+                                       token === '<image>';
+                
+                const isImageToken = token.includes('vision_token') || 
+                                    token.includes('image_pad') ||
+                                    token.startsWith('img_');
+                
+                return isImageToken && !isSpecialVision;
+            });
+            const textTokens = filteredData.filter(d => {
+                const token = d.token_masked.toLowerCase();
+                const isSpecialVision = token === '<vision_start>' || 
+                                       token === '<vision_end>' || 
+                                       token === '<image>';
+                
+                const isImageToken = token.includes('vision_token') || 
+                                    token.includes('image_pad') ||
+                                    token.startsWith('img_');
+                
+                return (!isImageToken || isSpecialVision);
+            });
+            
+            // Detect grid dimensions for image tokens
+            // Prefer exact sqrt for perfect squares (256 -> 16, not 17)
+            const sqrtExact = Math.sqrt(imageTokens.length);
+            const gridSize = Number.isInteger(sqrtExact) ? sqrtExact : Math.ceil(sqrtExact);
+            
+            console.log(`Image tokens: ${imageTokens.length}, Grid: ${gridSize}×${gridSize}`);
+            
+            // Render visualization
+            renderVisualization(imageTokens, textTokens, gridSize);
+        }
+        
+        function renderVisualization(imageTokens, textTokens, gridSize) {
+            const content = document.getElementById('content');
+            
+            // Get values for color scaling
+            const imageValues = imageTokens.map(t => parseFloat(t[currentMetric])).filter(v => !isNaN(v));
+            const textValues = textTokens.map(t => parseFloat(t[currentMetric])).filter(v => !isNaN(v));
+            
+            // Calculate max excluding first token if option is enabled
+            const imageValuesForScale = excludeFirstImage && imageValues.length > 1 
+                ? imageValues.slice(1) 
+                : imageValues;
+            const imageMax = Math.max(...imageValuesForScale, 0);
+            const textMax = Math.max(...textValues, 0);
+            
+            // Calculate stats
+            const imageAvg = imageValues.length > 0 ? imageValues.reduce((a, b) => a + b, 0) / imageValues.length : 0;
+            const textAvg = textValues.length > 0 ? textValues.reduce((a, b) => a + b, 0) / textValues.length : 0;
+            
+            let html = '<div class="visualization">';
+            
+            // Image tokens section
+            html += '<div class="section">';
+            html += `<h2>🖼️ Image Tokens (${imageTokens.length})</h2>`;
+            html += '<div class="stats">';
+            html += `<div class="stat-item"><div class="stat-label">Max</div><div class="stat-value">${imageMax.toFixed(4)}</div></div>`;
+            html += `<div class="stat-item"><div class="stat-label">Avg</div><div class="stat-value">${imageAvg.toFixed(4)}</div></div>`;
+            html += `<div class="stat-item"><div class="stat-label">Grid</div><div class="stat-value">${gridSize}×${gridSize}</div></div>`;
+            html += '</div>';
+            
+            // Render image grid with optional background image
+            html += '<div class="grid-container">';
+            
+            // Add background image if loaded
+            if (loadedImage) {
+                html += `<img src="${loadedImage}" class="overlay-image" alt="Background">`;
+            }
+            
+            // Grid overlay
+            const transparentClass = (transparentGrid && loadedImage) ? ' transparent' : '';
+            html += `<div class="image-grid" style="grid-template-columns: repeat(${gridSize}, 1fr);">`;
+            for (let i = 0; i < imageTokens.length; i++) {
+                const token = imageTokens[i];
+                const value = parseFloat(token[currentMetric]);
+                const heatmapClass = getHeatmapClass(value, imageMax, imageValuesForScale);
+                
+                html += `<div class="image-token ${heatmapClass}${transparentClass}" title="${token.token_masked}: ${value.toFixed(4)}">`;
+                html += `<div>${value.toFixed(3)}</div>`;
+                html += `<div class="token-label">Pos ${token.token_position}</div>`;
+                html += `</div>`;
+            }
+            html += '</div>'; // Close image-grid
+            html += '</div>'; // Close grid-container
+            html += '</div>'; // Close section
+            
+            // Text tokens section
+            html += '<div class="section">';
+            html += `<h2>📝 Text Tokens (${textTokens.length})</h2>`;
+            html += '<div class="stats">';
+            html += `<div class="stat-item"><div class="stat-label">Max</div><div class="stat-value">${textMax.toFixed(4)}</div></div>`;
+            html += `<div class="stat-item"><div class="stat-label">Avg</div><div class="stat-value">${textAvg.toFixed(4)}</div></div>`;
+            html += '</div>';
+            
+            // Render text tokens
+            html += '<div class="text-tokens">';
+            for (const token of textTokens) {
+                const value = parseFloat(token[currentMetric]);
+                const heatmapClass = getHeatmapClass(value, textMax, textValues);
+                
+                let displayToken = token.token_masked;
+                if (displayToken === '\n' || displayToken === '\\n') displayToken = '↵';
+                if (displayToken.trim() === '') displayToken = '[space]';
+                
+                html += `<div class="text-token ${heatmapClass}" title="Position ${token.token_position}: ${value.toFixed(4)}">`;
+                html += `<div>${displayToken}</div>`;
+                html += `<div class="token-info">${value.toFixed(3)}</div>`;
+                html += `</div>`;
+            }
+            html += '</div>';
+            html += '</div>';
+            
+            html += '</div>';
+            content.innerHTML = html;
+        }
+        
+        function getHeatmapClass(value, maxValue, allValues) {
+            if (maxValue === 0 || isNaN(value)) return 'heatmap-0';
+            
+            let normalizedValue;
+            
+            if (currentScaling === 'percentile') {
+                // Percentile-based scaling
+                const sortedValues = [...allValues].sort((a, b) => a - b);
+                const rank = sortedValues.filter(v => v <= value).length;
+                normalizedValue = rank / sortedValues.length;
+            } else {
+                // Linear or sqrt scaling
+                normalizedValue = value / maxValue;
+                
+                if (currentScaling === 'sqrt') {
+                    normalizedValue = Math.sqrt(normalizedValue);
+                }
+            }
+            
+            // Map to 0-20 range
+            const level = Math.min(20, Math.floor(normalizedValue * 20));
+            return `heatmap-${level}`;
+        }
+    </script>
+</body>
+</html>
+

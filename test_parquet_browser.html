@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hyparquet Browser Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        input[type="file"] {
+            padding: 10px;
+            border: 2px solid #007bff;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #e7f3ff;
+            border-left: 4px solid #007bff;
+            border-radius: 4px;
+            white-space: pre-wrap;
+        }
+        .error {
+            background-color: #ffe5e5;
+            border-left-color: #ff3333;
+            color: #cc0000;
+        }
+        .success {
+            background-color: #e5ffe5;
+            border-left-color: #33ff33;
+            color: #006600;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+            border: 1px solid #ddd;
+        }
+        th {
+            background-color: #f0f0f0;
+            font-weight: 600;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-box">
+        <h1>🧪 Hyparquet Browser Test</h1>
+        <p>Test that Parquet files load correctly in the browser using hyparquet.</p>
+        
+        <input type="file" id="fileInput" accept=".parquet">
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const resultDiv = document.getElementById('result');
+
+        fileInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const startTime = performance.now();
+            resultDiv.innerHTML = '<div class="result">Loading...</div>';
+
+            try {
+                // Import hyparquet
+                console.log('Importing hyparquet...');
+                const { parquetReadObjects } = await import('https://cdn.jsdelivr.net/npm/hyparquet/src/hyparquet.min.js');
+                
+                // Read file
+                console.log('Reading file...');
+                const arrayBuffer = await file.arrayBuffer();
+                
+                // Parse parquet
+                console.log('Parsing parquet...');
+                const data = await parquetReadObjects({ file: arrayBuffer });
+                
+                const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
+                const fileSize = (file.size / (1024 * 1024)).toFixed(2);
+                
+                // Display results
+                let html = `<div class="result success">`;
+                html += `<strong>✅ Success!</strong>\n\n`;
+                html += `File: ${file.name}\n`;
+                html += `Size: ${fileSize} MB\n`;
+                html += `Rows: ${data.length.toLocaleString()}\n`;
+                html += `Columns: ${Object.keys(data[0] || {}).length}\n`;
+                html += `Load time: ${loadTime}s\n`;
+                html += `</div>`;
+                
+                // Show column names
+                if (data.length > 0) {
+                    html += `<h3>Columns:</h3>`;
+                    html += `<p>${Object.keys(data[0]).join(', ')}</p>`;
+                }
+                
+                // Show first few rows
+                if (data.length > 0) {
+                    html += `<h3>First ${Math.min(5, data.length)} rows:</h3>`;
+                    html += `<table>`;
+                    
+                    // Header
+                    html += `<tr>`;
+                    for (const col of Object.keys(data[0])) {
+                        html += `<th>${col}</th>`;
+                    }
+                    html += `</tr>`;
+                    
+                    // Rows
+                    for (let i = 0; i < Math.min(5, data.length); i++) {
+                        html += `<tr>`;
+                        for (const col of Object.keys(data[0])) {
+                            let val = data[i][col];
+                            if (typeof val === 'number') {
+                                val = val.toFixed(4);
+                            }
+                            html += `<td>${val}</td>`;
+                        }
+                        html += `</tr>`;
+                    }
+                    html += `</table>`;
+                }
+                
+                resultDiv.innerHTML = html;
+                
+            } catch (err) {
+                console.error('Error:', err);
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <strong>❌ Error loading Parquet file</strong>
+                        
+                        ${err.message}
+                        
+                        Check browser console for details.
+                    </div>
+                `;
+            }
+        });
+    </script>
+</body>
+</html>
+

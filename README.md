@@ -93,7 +93,7 @@ df.to_csv("results.csv", index=False)
 
 The analysis generates two output files in the `output/` directory:
 - **`output/{name}_results.csv`** - For spreadsheet analysis
-- **`output/{name}_results.json`** - For fast web visualization (recommended)
+- **`output/{name}_results.parquet`** - For fast web visualization (recommended, 99%+ smaller!)
 
 Both contain the same data in long format with the following columns:
 - `generation_step`: Which output token is being predicted (0 = initial prompt, 1 = after 1st generated token, etc.)
@@ -112,12 +112,16 @@ Both contain the same data in long format with the following columns:
 
 ## Visualization
 
-Use **`visualize_results.html`** to interactively explore your results:
+### Standard Viewer (`visualize_results.html`)
+
+Use **`visualize_results.html`** for standard table-based visualization:
 
 1. Open `visualize_results.html` in any web browser
 2. Load a results file from the `output/` directory:
-   - `output/{name}_results.json` (recommended - 10x faster)
-   - `output/{name}_results.csv` (backup option)
+   - `output/{name}_results.parquet` (recommended - 99%+ smaller, fast loading!)
+   - `output/{name}_results.csv` (backup - works everywhere)
+   
+   **Note**: Parquet uses hyparquet library with Snappy compression for browser compatibility.
 3. Features:
    - **Toggle metrics**: Switch between L2 and Cosine distance
    - **Filter by step**: View one generation step at a time (much faster!)
@@ -126,9 +130,49 @@ Use **`visualize_results.html`** to interactively explore your results:
    - **Exclude pos 0**: Toggle to exclude attention sink from color scale
    - **Sticky headers**: Scroll through data while keeping headers visible
 
-**Performance**: JSON loads ~10x faster than CSV. For a 165k row dataset:
-- JSON: ~2-3 seconds
-- CSV: ~20-30 seconds
+**Performance**: Parquet is dramatically faster and smaller. Example (3.8M rows):
+- **Parquet (Snappy)**: Fast load, ~4-5 MB (0.7% of CSV) ✨
+- JSON: 11.5s load, 1.1 GB (183% of CSV)
+- CSV: 20-30s load, 613 MB
+
+**Note for Large Files**: Files with 100K+ rows load quickly, but rendering all data at once can freeze the browser. The viewer automatically defaults to showing **Step 0 only** for performance. Use the step selector to view other steps individually.
+
+**Create a Sample** (for testing):
+```bash
+python create_sample_parquet.py 10000  # Creates a 10K row sample
+```
+
+### Vision-Language Grid Viewer (`visualize_vl_grid.html`) 🆕
+
+Specialized viewer for **image token analysis** with 2D grid layout:
+
+**Features:**
+- 🖼️ **Image tokens as grid**: Visualizes image tokens in their natural 2D structure
+- 📝 **Text tokens separately**: Shows text tokens in a horizontal layout
+- 🎨 **Separate heatmaps**: Image and text tokens colored relative to their own maximums
+- ⌨️ **Keyboard navigation**:
+  - `←/→` Navigate between layers
+  - `↑/↓` Navigate between generation steps
+  - `M` Toggle metric (L2 ↔ Cosine)
+  - `S` Toggle scaling (Linear ↔ Square Root)
+- 📊 **Statistics**: Shows max/avg values for both image and text tokens
+- 🎯 **Focused view**: Shows one layer + one step at a time for clarity
+
+**Usage:**
+```bash
+# Open in browser
+open visualize_vl_grid.html
+
+# Load your Parquet file
+# Starts at Layer 0, Step 0
+# Use arrow keys to navigate
+```
+
+**Perfect for:**
+- Analyzing spatial patterns in image token attention
+- Comparing image vs text token importance
+- Exploring layer-by-layer evolution
+- Understanding generation step progression
 
 ## Early Stopping
 
@@ -226,13 +270,15 @@ mask_impact/
 ├── mask_impact_vl.py            # Vision-language models (Qwen3-VL Phase 1) 🆕
 ├── prompts_config.yaml           # Batch mode for text models
 ├── prompts_config_vl.yaml       # Batch mode for VL models (text-only) 🆕
-├── visualize_results.html        # Interactive results viewer
+├── visualize_results.html        # Interactive results viewer (Parquet) 🆕
+├── visualize_vl_grid.html        # VL Grid viewer (2D image tokens) 🆕
+├── visualize_results_json.html   # Legacy viewer (JSON)
 ├── BATCH_MODE_GUIDE.md          # Detailed batch mode documentation
 ├── VL_IMPLEMENTATION.md         # VL-specific documentation 🆕
 ├── test_vl_phase1.py            # VL test suite 🆕
 ├── output/                       # All results saved here
-│   ├── {name}_results.csv
-│   └── {name}_results.json
+│   ├── {name}_results.csv       # For spreadsheets
+│   └── {name}_results.parquet   # For web visualization (99% smaller!) 🆕
 └── prompt.txt                    # Single prompt (optional)
 ```
 

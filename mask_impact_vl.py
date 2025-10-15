@@ -922,14 +922,48 @@ Examples:
     # Save to output files in output directory
     
     csv_file = output_dir / f'{output_filename}.csv'
-    json_file = output_dir / f'{output_filename}.json'
+    parquet_file = output_dir / f'{output_filename}.parquet'
     
+    # Optimize dataframe for Parquet storage
+    print(f"\nOptimizing data for storage...")
+    df_optimized = combined_df.copy()
+    
+    # Convert float columns to float32 (round to 4 decimal places)
+    for col in ['l2_distance', 'cosine_distance']:
+        if col in df_optimized.columns:
+            df_optimized[col] = df_optimized[col].round(4).astype('float32')
+            print(f"  Converted {col} to float32 (4 decimal precision)")
+    
+    # Convert string columns to categorical for better compression
+    string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
+    for col in string_cols:
+        unique_ratio = df_optimized[col].nunique() / len(df_optimized)
+        if unique_ratio < 0.5:  # Only if less than 50% unique values
+            df_optimized[col] = df_optimized[col].astype('category')
+            print(f"  Converted {col} to categorical ({df_optimized[col].nunique()} unique values)")
+    
+    # Save CSV (for spreadsheet compatibility)
+    print(f"\nSaving CSV...")
     combined_df.to_csv(csv_file, index=False)
-    combined_df.to_json(json_file, orient='records')
+    csv_size = csv_file.stat().st_size
+    
+    # Save Parquet (for fast web visualization)
+    print(f"Saving Parquet...")
+    df_optimized.to_parquet(parquet_file, compression='snappy', index=False)
+    parquet_size = parquet_file.stat().st_size
+    
+    # Format file sizes
+    def format_size(bytes):
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes < 1024.0:
+                return f"{bytes:.2f} {unit}"
+            bytes /= 1024.0
+        return f"{bytes:.2f} TB"
     
     print(f"\nResults saved to:")
-    print(f"  - {csv_file} (for spreadsheet analysis)")
-    print(f"  - {json_file} (for fast web visualization)")
+    print(f"  - {csv_file} ({format_size(csv_size)}) - for spreadsheet analysis")
+    print(f"  - {parquet_file} ({format_size(parquet_size)}) - for web visualization")
+    print(f"\nStorage efficiency: Parquet is {(1 - parquet_size/csv_size)*100:.1f}% smaller than CSV")
     print(f"\nFirst few rows:")
     print(combined_df.head(20))
 

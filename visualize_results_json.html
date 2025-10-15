@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Token Masking Results Viewer</title>
-    <!-- Parquet reader for JavaScript - hyparquet is loaded dynamically when needed -->
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -197,13 +196,11 @@
         <h1>🔬 Token Masking Results Viewer</h1>
         <p>Visualize how masking each token affects the residual stream updates at each layer.</p>
         <p style="font-size: 0.9em; color: #666;">💡 Heatmap colors are relative to the <strong>maximum value in each row</strong> (layer), making it easy to identify the most impactful tokens per layer.</p>
-        <p style="font-size: 0.85em; color: #ff6600;"><strong>⚡ Performance Tip:</strong> For large files (100K+ rows), view one generation step at a time using the step selector below.</p>
         
         <div class="controls">
             <div class="control-group">
                 <label for="csvFile">Load Data:</label>
-                <input type="file" id="csvFile" accept=".parquet,.json,.csv">
-                <span style="font-size: 0.85em; color: #666;">(Parquet supported via hyparquet)</span>
+                <input type="file" id="csvFile" accept=".json,.csv">
             </div>
             
             <div class="control-group">
@@ -264,7 +261,7 @@
         let data = [];
         let currentMetric = 'l2';
         let currentVariant = 'Full';
-        let currentStep = '0';  // Default to step 0 for better performance
+        let currentStep = 'all';
         let heatmapEnabled = true;
         let heatmapScaling = 'linear';
         let excludeFirstToken = true;
@@ -310,23 +307,16 @@
         });
 
         // File input
-        document.getElementById('csvFile').addEventListener('change', async function(e) {
+        document.getElementById('csvFile').addEventListener('change', function(e) {
             const file = e.target.files[0];
             if (file) {
                 const startTime = performance.now();
-                
-                if (file.name.endsWith('.parquet')) {
-                    // Fast Parquet loading
-                    try {
-                        await loadParquet(file, startTime);
-                    } catch (err) {
-                        showError(`Error loading Parquet: ${err.message}`);
-                    }
-                } else if (file.name.endsWith('.json')) {
-                    // Fast JSON parsing
-                    const reader = new FileReader();
-                    reader.onload = function(event) {
-                        const text = event.target.result;
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const text = event.target.result;
+                    
+                    if (file.name.endsWith('.json')) {
+                        // Fast JSON parsing
                         try {
                             data = JSON.parse(text);
                             const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
@@ -336,64 +326,16 @@
                         } catch (err) {
                             showError(`Error parsing JSON: ${err.message}`);
                         }
-                    };
-                    reader.readAsText(file);
-                } else {
-                    // CSV parsing (slower)
-                    const reader = new FileReader();
-                    reader.onload = function(event) {
-                        const text = event.target.result;
+                    } else {
+                        // CSV parsing (slower)
                         parseCSV(text);
                         const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
                         showInfo(`Loaded ${data.length} rows from CSV in ${loadTime}s`);
-                    };
-                    reader.readAsText(file);
-                }
+                    }
+                };
+                reader.readAsText(file);
             }
         });
-
-        async function loadParquet(file, startTime) {
-            try {
-                console.log('Step 1: Importing hyparquet...');
-                showInfo('Loading Parquet file: importing library...');
-                
-                // Dynamically import hyparquet from CDN (using ES module bundle)
-                const hyparquetModule = await import('https://cdn.jsdelivr.net/npm/hyparquet@1.4.0/+esm');
-                const parquetReadObjects = hyparquetModule.parquetReadObjects;
-                console.log('Step 2: Hyparquet imported successfully');
-                
-                console.log('Step 3: Reading file as ArrayBuffer...');
-                showInfo('Loading Parquet file: reading file...');
-                const arrayBuffer = await file.arrayBuffer();
-                console.log('Step 4: ArrayBuffer ready, size:', arrayBuffer.byteLength, 'bytes');
-                
-                console.log('Step 5: Parsing parquet file...');
-                showInfo('Loading Parquet file: parsing data...');
-                
-                // Parse parquet file - returns array of objects directly!
-                data = await parquetReadObjects({ file: arrayBuffer });
-                
-                console.log('Step 6: Parquet parsed successfully, rows:', data.length);
-                
-                const loadTime = ((performance.now() - startTime) / 1000).toFixed(2);
-                const fileSize = (file.size / (1024 * 1024)).toFixed(2);
-                showInfo(`Loaded ${data.length.toLocaleString()} rows from Parquet (${fileSize} MB) in ${loadTime}s`);
-                populateDropdowns();
-                renderTable();
-            } catch (err) {
-                console.error('Parquet loading error:', err);
-                console.error('Error name:', err.name);
-                console.error('Error message:', err.message);
-                console.error('Error stack:', err.stack);
-                
-                const fileName = file.name;
-                showError(`Failed to load Parquet file: <strong>${err.message}</strong><br><br>
-                    Please check browser console for details, or use one of these alternatives:<br>
-                    1. Load the CSV version instead (${fileName.replace('.parquet', '.csv')})<br>
-                    2. Convert to JSON: <code>python convert_parquet_to_json.py ${fileName}</code><br>
-                    3. Use visualize_results_json.html with the JSON version`);
-            }
-        }
 
         function parseCSV(csvText) {
             // Proper CSV parsing that handles quoted fields with newlines
@@ -450,18 +392,6 @@
             const stepSelect = document.getElementById('stepSelect');
             stepSelect.innerHTML = '<option value="all">All Steps</option>' + 
                 steps.map(s => `<option value="${s}">Step ${s}</option>`).join('');
-            
-            // Set default to step 0 (or first available step) for better performance
-            if (steps.length > 0) {
-                currentStep = steps[0].toString();
-                stepSelect.value = currentStep;
-            }
-            
-            // Show warning for large datasets
-            if (data.length > 100000) {
-                console.warn(`Large dataset (${data.length.toLocaleString()} rows). Defaulting to Step ${currentStep} for performance.`);
-                showInfo(`Large dataset detected (${data.length.toLocaleString()} rows). Showing Step ${currentStep} only for performance. Use step selector to view other steps.`);
-            }
             
             // Populate variant dropdown
             const variants = [...new Set(data.map(d => d.variant))].sort();
