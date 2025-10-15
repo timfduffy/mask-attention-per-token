@@ -19,8 +19,9 @@ prompts:
       What is in the image? Be extremely brief.
       <image><|im_end|>
       <|im_start|>assistant
-    image_path: "testimg3.png"
+    image_path: "testimg2.jpg"
     num_tokens: 50
+    mask_mode: "all"  # Options: "text", "vision", or "all"
   
 
 

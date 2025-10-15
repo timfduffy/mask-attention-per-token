@@ -835,10 +835,15 @@ Examples:
         
         # Process each enabled prompt
         all_results = []
+        output_name = None  # Will be set from first prompt
         for i, prompt_config in enumerate(enabled_prompts):
             print(f"\n{'='*70}")
             print(f"Processing prompt {i+1}/{len(enabled_prompts)}: {prompt_config.get('name', 'unnamed')}")
             print(f"{'='*70}")
+            
+            # Set output name from first prompt
+            if output_name is None:
+                output_name = prompt_config.get('name', 'unnamed')
             
             prompt = prompt_config['prompt']
             image_path = prompt_config.get('image_path')
@@ -869,6 +874,8 @@ Examples:
         # Combine all results
         import pandas as pd
         combined_df = pd.concat(all_results, ignore_index=True)
+        # Use the output name from config
+        output_filename = output_name
         
     else:
         # Original command line processing
@@ -909,10 +916,13 @@ Examples:
             mask_mode=args.mask_mode,
             use_chatml_format=False
         )
+        # Use args.output for command line mode
+        output_filename = args.output
     
     # Save to output files in output directory
-    csv_file = output_dir / f'{args.output}.csv'
-    json_file = output_dir / f'{args.output}.json'
+    
+    csv_file = output_dir / f'{output_filename}.csv'
+    json_file = output_dir / f'{output_filename}.json'
     
     combined_df.to_csv(csv_file, index=False)
     combined_df.to_json(json_file, orient='records')
