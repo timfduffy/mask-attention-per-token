@@ -12,6 +12,9 @@ from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 from dataclasses import dataclass
+import yaml
+import argparse
+from pathlib import Path
 
 
 @dataclass
@@ -234,7 +237,39 @@ def compute_distances(baseline: torch.Tensor, masked: torch.Tensor) -> Tuple[flo
     return l2_dist, cos_dist
 
 
-def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int]], device: str) -> torch.Tensor:
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file"""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+
+def process_chatml_prompt(prompt: str, image_path: Optional[str] = None) -> List[Dict]:
+    """
+    Process ChatML format prompt according to Qwen3-VL official spec.
+    Returns the content list in the format expected by Qwen3-VL.
+    """
+    if image_path and '<image>' in prompt:
+        # Remove the <image> placeholder and create proper content structure
+        processed_prompt = prompt.replace('<image>', '').strip()
+        
+        # Create content in the official Qwen3-VL format
+        content = [
+            {
+                "type": "image",
+                "url": image_path  # Use "url" as per official spec
+            },
+            {
+                "type": "text", 
+                "text": processed_prompt
+            }
+        ]
+        return content
+    else:
+        # Text-only content
+        return [{"type": "text", "text": prompt}]
+
+
+def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int]], device: str, dtype: torch.dtype = torch.float32) -> torch.Tensor:
     """
     Create proper attention mask for VL models:
     - Vision tokens: bidirectional attention (can attend to each other)
@@ -245,12 +280,13 @@ def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int
         seq_length: Total sequence length
         vision_ranges: List of (start, end) tuples for vision token positions
         device: Device for tensor
+        dtype: Data type for the mask tensor (should match hidden states dtype)
     
     Returns:
         Attention mask of shape [1, 1, seq_length, seq_length]
     """
     # Start with causal mask (all text tokens are causal)
-    mask = torch.triu(torch.ones((seq_length, seq_length), device=device) * float('-inf'), diagonal=1)
+    mask = torch.triu(torch.ones((seq_length, seq_length), device=device, dtype=dtype) * float('-inf'), diagonal=1)
     
     # For each vision token range, make it bidirectional
     for start, end in vision_ranges:
@@ -269,7 +305,8 @@ def run_vl_masking_experiment(
     device: str = 'cpu',
     num_output_tokens: int = 1,
     image_path: Optional[str] = None,
-    mask_mode: str = 'text'
+    mask_mode: str = 'text',
+    use_chatml_format: bool = False
 ) -> pd.DataFrame:
     """
     Run the complete VL masking experiment
@@ -326,31 +363,56 @@ def run_vl_masking_experiment(
     print(f"Attention heads: {model.config.text_config.num_attention_heads}")
     
     # Process input (with or without image)
-    content = []
-    if image_path:
-        from PIL import Image
-        print(f"\nLoading image: {image_path}")
-        image = Image.open(image_path)
-        print(f"  Image size: {image.size}")
-        content.append({"type": "image", "image": image})
-    
-    content.append({"type": "text", "text": prompt})
-    
-    messages = [
-        {
-            "role": "user",
-            "content": content
-        }
-    ]
-    
-    # Tokenize using processor
-    inputs = processor.apply_chat_template(
-        messages,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt"
-    ).to(device)
+    if use_chatml_format:
+        # Handle ChatML format from config using official Qwen3-VL spec
+        if image_path:
+            print(f"\nLoading image: {image_path}")
+            from PIL import Image
+            image = Image.open(image_path)
+            print(f"  Image size: {image.size}")
+            
+            # Process ChatML format prompt according to official spec
+            content = process_chatml_prompt(prompt, image_path)
+        else:
+            content = process_chatml_prompt(prompt, None)
+        
+        messages = [{"role": "user", "content": content}]
+        
+        # Tokenize using processor with official format
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(device)
+    else:
+        # Original format
+        content = []
+        if image_path:
+            from PIL import Image
+            print(f"\nLoading image: {image_path}")
+            image = Image.open(image_path)
+            print(f"  Image size: {image.size}")
+            content.append({"type": "image", "image": image})
+        
+        content.append({"type": "text", "text": prompt})
+        
+        messages = [
+            {
+                "role": "user",
+                "content": content
+            }
+        ]
+        
+        # Tokenize using processor
+        inputs = processor.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(device)
     
     # Remove token_type_ids if present (not used by model)
     inputs.pop("token_type_ids", None)
@@ -417,21 +479,40 @@ def run_vl_masking_experiment(
     
     for gen_step in range(num_output_tokens):
         if gen_step > 0:
-            # Generate next token
+            # Generate next token using the generate method (more reliable)
             with torch.no_grad():
-                outputs = model(current_input_ids)
-                logits = outputs.logits[0, -1, :]
-                predicted_token_id = torch.argmax(logits).item()
-                predicted_token = processor.tokenizer.decode([predicted_token_id])
+                # Use generate method to get the next token
+                generated_ids = model.generate(
+                    current_input_ids,
+                    attention_mask=inputs.get('attention_mask'),
+                    pixel_values=inputs.get('pixel_values'),
+                    image_grid_thw=inputs.get('image_grid_thw'),
+                    max_new_tokens=1,
+                    do_sample=False,
+                    temperature=0.0,
+                    pad_token_id=processor.tokenizer.eos_token_id
+                )
                 
-                # Append to input
-                current_input_ids = torch.cat([current_input_ids, torch.tensor([[predicted_token_id]], device=device)], dim=1)
+                # Extract the new token
+                new_token_id = generated_ids[0, -1].item()
+                predicted_token = processor.tokenizer.decode([new_token_id])
+                
+                # Update current input for next iteration
+                current_input_ids = generated_ids
+                
+                # Update attention mask to match new length
+                if 'attention_mask' in inputs:
+                    new_attention_mask = torch.cat([
+                        inputs['attention_mask'], 
+                        torch.ones((1, 1), device=device, dtype=inputs['attention_mask'].dtype)
+                    ], dim=1)
+                    inputs['attention_mask'] = new_attention_mask
                 
                 print(f"\n{'='*70}")
                 print(f"Generation step {gen_step}: Generated token '{predicted_token}'")
                 
                 # Check for EOS or <|im_end|> token
-                if predicted_token_id == eos_token_id or predicted_token_id == im_end_token_id:
+                if new_token_id == eos_token_id or new_token_id == im_end_token_id:
                     print(f"Stopping early: Generated end token ('{predicted_token}')")
                     print(f"{'='*70}\n")
                     break
@@ -457,7 +538,8 @@ def run_vl_masking_experiment(
             position_ids = torch.arange(seq_length, dtype=torch.long, device=device).unsqueeze(0)
             
             # Create proper attention mask (bidirectional for vision, causal for text)
-            attention_mask = create_vl_attention_mask(seq_length, vision_ranges, device)
+            # Use the same dtype as hidden states to avoid SDPA dtype mismatch
+            attention_mask = create_vl_attention_mask(seq_length, vision_ranges, device, dtype=hidden_states.dtype)
             
             # Get RoPE embeddings (MRoPE for VL, but text-only uses standard section)
             position_embeddings = model.model.language_model.rotary_emb(hidden_states, position_ids)
@@ -608,54 +690,64 @@ def run_vl_masking_experiment(
     print(f"Baseline Prediction (no masking, temperature=0, {num_output_tokens} token{'s' if num_output_tokens > 1 else ''}):")
     print("="*70)
     with torch.no_grad():
-        # Generate multiple tokens autoregressively
-        generated_ids = input_ids.clone()
-        generated_tokens = []
-        early_stop = False
+        # Use the proper generate() method for baseline prediction
+        # Use original inputs for baseline (before any modifications)
+        original_inputs = processor.apply_chat_template(
+            messages if use_chatml_format else None,
+            tokenize=True,
+            add_generation_prompt=True,
+            return_dict=True,
+            return_tensors="pt"
+        ).to(device) if use_chatml_format else {'input_ids': input_ids, 'attention_mask': inputs.get('attention_mask')}
         
-        for step in range(num_output_tokens):
-            outputs = model(generated_ids)
-            logits = outputs.logits[0, -1, :]  # Get logits for final position
-            predicted_token_id = torch.argmax(logits).item()
-            predicted_token = processor.tokenizer.decode([predicted_token_id])
-            generated_tokens.append(predicted_token)
-            
-            # Append predicted token for next iteration
-            generated_ids = torch.cat([generated_ids, torch.tensor([[predicted_token_id]], device=device)], dim=1)
-            
-            # Show top-5 for first token
-            if step == 0:
-                top_k_values, top_k_indices = torch.topk(logits, k=5)
-                top_k_tokens = [processor.tokenizer.decode([idx.item()]) for idx in top_k_indices]
-                top_k_probs = torch.softmax(top_k_values, dim=0)
-            
-            # Check for EOS or <|im_end|> token
-            if predicted_token_id == eos_token_id or predicted_token_id == im_end_token_id:
-                early_stop = True
-                break
+        if 'token_type_ids' in original_inputs:
+            original_inputs.pop('token_type_ids')
+        
+        generated_ids = model.generate(
+            original_inputs['input_ids'],
+            attention_mask=original_inputs.get('attention_mask'),
+            pixel_values=inputs.get('pixel_values'),
+            image_grid_thw=inputs.get('image_grid_thw'),
+            max_new_tokens=num_output_tokens,
+            do_sample=False,
+            temperature=0.0,
+            pad_token_id=processor.tokenizer.eos_token_id
+        )
+        
+        # Decode the generated tokens
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(original_inputs['input_ids'], generated_ids)
+        ]
+        output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        
+        # Also get first token prediction for comparison
+        # Merge original inputs with vision inputs
+        baseline_inputs = original_inputs.copy()
+        baseline_inputs.update({
+            'pixel_values': inputs.get('pixel_values'),
+            'image_grid_thw': inputs.get('image_grid_thw')
+        })
+        outputs = model(**baseline_inputs)
+        logits = outputs.logits[0, -1, :]
+        predicted_token_id = torch.argmax(logits).item()
+        predicted_token = processor.tokenizer.decode([predicted_token_id])
+        
+        # Show top-5 for first token
+        top_k_values, top_k_indices = torch.topk(logits, k=5)
+        top_k_probs = torch.softmax(top_k_values, dim=-1)
+        top_k_tokens = [processor.tokenizer.decode([idx.item()]) for idx in top_k_indices]
+        top_k_probs = [prob.item() for prob in top_k_probs]
         
         print(f"Input prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
         
-        if num_output_tokens == 1:
-            print(f"\nGreedy prediction (argmax): '{generated_tokens[0]}'")
-            print(f"\nTop 5 predictions for next token:")
-            for i, (token, prob) in enumerate(zip(top_k_tokens, top_k_probs), 1):
-                print(f"  {i}. '{token}' (prob: {prob:.4f})")
-        else:
-            full_generation = ''.join(generated_tokens)
-            actual_tokens = len(generated_tokens)
-            stop_msg = f" (stopped early at {actual_tokens} tokens)" if early_stop else ""
-            print(f"\nGenerated sequence ({actual_tokens}/{num_output_tokens} tokens{stop_msg}):")
-            print(f"  {full_generation}")
-            print(f"\nToken-by-token:")
-            for i, token in enumerate(generated_tokens, 1):
-                print(f"  {i}. '{token}'")
-            if early_stop:
-                print(f"\n⚠ Generation stopped early: Model generated end token")
-            if num_output_tokens > 0:
-                print(f"\nTop 5 predictions for first token:")
-                for i, (token, prob) in enumerate(zip(top_k_tokens, top_k_probs), 1):
-                    print(f"  {i}. '{token}' (prob: {prob:.4f})")
+        print(f"\nGenerated sequence:")
+        print(f"  {output_text[0]}")
+        print(f"\nFirst token prediction: '{predicted_token}'")
+        print(f"\nTop 5 predictions for first token:")
+        for i, (token, prob) in enumerate(zip(top_k_tokens, top_k_probs), 1):
+            print(f"  {i}. '{token}' (prob: {prob:.4f})")
     print("="*70 + "\n")
     
     return df
@@ -705,56 +797,129 @@ Examples:
     parser.add_argument('--output', type=str, default='vl_masking_results', help='Output file basename')
     parser.add_argument('--model', type=str, default="Qwen/Qwen3-VL-4B-Instruct", help='Model path')
     parser.add_argument('--device', type=str, choices=['auto', 'cuda', 'cpu'], default='auto', help='Device to use')
+    parser.add_argument('--config', type=str, help='Path to YAML config file (overrides other arguments)')
     
     args = parser.parse_args()
     
-    # Determine device
-    if args.device == 'auto':
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    else:
-        device = args.device
-    
-    print(f"Using device: {device}")
-    
-    # Get prompt from command line or prompt.txt
-    if args.prompt:
-        if args.prompt.endswith('.txt') and os.path.exists(args.prompt):
-            with open(args.prompt, 'r', encoding='utf-8') as f:
-                prompt = f.read()
-            print(f"Loaded prompt from {args.prompt}")
+    # Handle config file
+    if args.config:
+        print(f"Loading configuration from {args.config}")
+        config = load_config(args.config)
+        
+        # Override command line args with config values
+        model_path = config.get('model', {}).get('path', args.model)
+        device_arg = config.get('device', args.device)
+        use_chatml_format = True  # Config format uses ChatML
+        
+        # Process prompts from config
+        prompts = config.get('prompts', [])
+        if not prompts:
+            print("No prompts found in config file")
+            sys.exit(1)
+        
+        # Find enabled prompts
+        enabled_prompts = [p for p in prompts if p.get('enabled', True)]
+        if not enabled_prompts:
+            print("No enabled prompts found in config file")
+            sys.exit(1)
+        
+        print(f"Found {len(enabled_prompts)} enabled prompt(s) in config")
+        
+        # Determine device
+        if device_arg == 'auto':
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
         else:
-            prompt = args.prompt
-            print(f"Using prompt from command line")
+            device = device_arg
+        
+        print(f"Using device: {device}")
+        
+        # Process each enabled prompt
+        all_results = []
+        for i, prompt_config in enumerate(enabled_prompts):
+            print(f"\n{'='*70}")
+            print(f"Processing prompt {i+1}/{len(enabled_prompts)}: {prompt_config.get('name', 'unnamed')}")
+            print(f"{'='*70}")
+            
+            prompt = prompt_config['prompt']
+            image_path = prompt_config.get('image_path')
+            num_tokens = prompt_config.get('num_tokens', 1)
+            mask_mode = prompt_config.get('mask_mode', 'text')
+            
+            print(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
+            if image_path:
+                print(f"Image: {image_path}")
+            print(f"Tokens: {num_tokens}, Mask mode: {mask_mode}")
+            
+            # Run experiment with ChatML format
+            df = run_vl_masking_experiment(
+                prompt,
+                model_path=model_path,
+                device=device,
+                num_output_tokens=num_tokens,
+                image_path=image_path,
+                mask_mode=mask_mode,
+                use_chatml_format=use_chatml_format
+            )
+            
+            # Add prompt info to results
+            df['prompt_name'] = prompt_config.get('name', f'prompt_{i+1}')
+            df['config_prompt'] = prompt
+            all_results.append(df)
+        
+        # Combine all results
+        import pandas as pd
+        combined_df = pd.concat(all_results, ignore_index=True)
+        
     else:
-        # Default: try prompt.txt
-        try:
-            with open('prompt.txt', 'r', encoding='utf-8') as f:
-                prompt = f.read()
-            print(f"Loaded prompt from prompt.txt")
-        except FileNotFoundError:
-            print(f"Warning: prompt.txt not found, using default prompt")
-            prompt = "What is the capital of France?"
-    
-    # Run experiment
-    df = run_vl_masking_experiment(
-        prompt,
-        model_path=args.model,
-        device=device,
-        num_output_tokens=args.num_tokens,
-        image_path=args.image,
-        mask_mode=args.mask_mode
-    )
+        # Original command line processing
+        # Determine device
+        if args.device == 'auto':
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        else:
+            device = args.device
+        
+        print(f"Using device: {device}")
+        
+        # Get prompt from command line or prompt.txt
+        if args.prompt:
+            if args.prompt.endswith('.txt') and os.path.exists(args.prompt):
+                with open(args.prompt, 'r', encoding='utf-8') as f:
+                    prompt = f.read()
+                print(f"Loaded prompt from {args.prompt}")
+            else:
+                prompt = args.prompt
+                print(f"Using prompt from command line")
+        else:
+            # Default: try prompt.txt
+            try:
+                with open('prompt.txt', 'r', encoding='utf-8') as f:
+                    prompt = f.read()
+                print(f"Loaded prompt from prompt.txt")
+            except FileNotFoundError:
+                print(f"Warning: prompt.txt not found, using default prompt")
+                prompt = "What is the capital of France?"
+        
+        # Run experiment
+        combined_df = run_vl_masking_experiment(
+            prompt,
+            model_path=args.model,
+            device=device,
+            num_output_tokens=args.num_tokens,
+            image_path=args.image,
+            mask_mode=args.mask_mode,
+            use_chatml_format=False
+        )
     
     # Save to output files in output directory
     csv_file = output_dir / f'{args.output}.csv'
     json_file = output_dir / f'{args.output}.json'
     
-    df.to_csv(csv_file, index=False)
-    df.to_json(json_file, orient='records')
+    combined_df.to_csv(csv_file, index=False)
+    combined_df.to_json(json_file, orient='records')
     
     print(f"\nResults saved to:")
     print(f"  - {csv_file} (for spreadsheet analysis)")
     print(f"  - {json_file} (for fast web visualization)")
     print(f"\nFirst few rows:")
-    print(df.head(20))
+    print(combined_df.head(20))
 

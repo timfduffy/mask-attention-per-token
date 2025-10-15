@@ -12,32 +12,15 @@ device: "auto"  # "auto", "cuda", or "cpu"
 
 prompts:
   # Example 1: Simple factual question
-  - name: "capital_france"
+  - name: "image_question"
     enabled: true
-    prompt: "What is the capital of France?"
-    num_tokens: 5
-  
-  # Example 2: Multi-step reasoning
-  - name: "math_problem"
-    enabled: true
-    prompt: "If Alice has 3 apples and Bob gives her 5 more, how many apples does Alice have? Just give the answer."
-    num_tokens: 10
-  
-  # Example 3: Chat format (VL model supports this)
-  - name: "animal_facts"
-    enabled: false  # Disable for initial testing
     prompt: |
       <|im_start|>user
-      Which animal is the largest: elephant, whale, or giraffe? Be brief.<|im_end|>
+      What is in the image? Be extremely brief.
+      <image><|im_end|>
       <|im_start|>assistant
-    num_tokens: 10
+    image_path: "testimg3.png"
+    num_tokens: 50
   
-  # Example 4: Simple completion
-  - name: "paris_completion"
-    enabled: true
-    prompt: "The Eiffel Tower is located in"
-    num_tokens: 3
-  
-  # Add more text-only prompts for testing...
-  # Phase 2 will add image inputs!
+
 
