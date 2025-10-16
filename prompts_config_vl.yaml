@@ -10,18 +10,140 @@ model:
   
 device: "auto"  # "auto", "cuda", or "cpu"
 
+# Global settings
+max_image_resolution: 768 # Downscale images larger than 1024px (optional)
+batch_size: 8  # Reduce batch size to avoid CUDA OOM
+
 prompts:
   # Example 1: Simple factual question
-  - name: "image_question"
+  - name: "claude_describe"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      Briefly describe this image.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "claude.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "cowboy_describe"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      Briefly describe this image.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "cowboys.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "cowboy_describe_clouds"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      Briefly describe the clouds in this image.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "cowboys.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "cowboy_location"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      What part of the US do you think this image depicts? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "cowboys.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "cowboy_horse_type"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      What kind of horses are in this image? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "cowboys.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "eras_text"
     enabled: true
     prompt: |
       <|im_start|>user
-      What is in the image? Be extremely brief.
+      What is the text in the image? Be brief.
       <image><|im_end|>
       <|im_start|>assistant
-    image_path: "testimg2.jpg"
+    image_path: "eras.webp"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "eras_figures"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      What are the three figures in the image? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "eras.webp"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "eras_legs"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      How many legs are in the image? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "eras.webp"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "orb_looking_at"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      What is the man looking at? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "orb.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "ships_cat_location"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Where is the picture taken? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "ships_cat.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "table_legs"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      How many of the table's legs are visible? Be brief.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "table.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "the_mask_content"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      What is depicted in the image?
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "the_mask.jpg"
     num_tokens: 50
     mask_mode: "all"  # Options: "text", "vision", or "all"
-  
-
-

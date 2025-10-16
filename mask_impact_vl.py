@@ -202,6 +202,153 @@ class VLAttentionMasker:
         attn_output = attn.o_proj(attn_output)
         
         return attn_output, per_head_outputs
+    
+    def run_batched_masked_from_cache(self, cached_hidden_states: torch.Tensor, layer_idx: int,
+                                     attention_mask: torch.Tensor, position_ids: torch.Tensor,
+                                     position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+                                     mask_positions: List[int], batch_size: int = 8) -> List[Dict[str, torch.Tensor]]:
+        """
+        Run batched masked forward passes using pre-computed hidden states.
+        Processes multiple mask positions in parallel for better performance.
+        """
+        results = []
+        
+        # Process in batches to avoid memory issues
+        
+        for i in range(0, len(mask_positions), batch_size):
+            batch_positions = mask_positions[i:i + batch_size]
+            
+            # Clear cache before each batch
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            with torch.no_grad():
+                # Use cached hidden states as input to target layer
+                hidden_states = cached_hidden_states.clone()
+                resid_pre = hidden_states.detach().clone()
+                
+                # Get target layer
+                layer = self.model.model.language_model.layers[layer_idx]
+                
+                # Run through the layer with batched masking
+                residual = hidden_states
+                hidden_states = layer.input_layernorm(hidden_states)
+                
+                # Run batched masked attention
+                attn_outputs, per_head_outputs_list = self._run_batched_attention(
+                    layer, hidden_states, attention_mask, position_ids,
+                    position_embeddings, mask_positions=batch_positions
+                )
+                
+                # Process each result in the batch
+                for j, mask_pos in enumerate(batch_positions):
+                    attn_output = attn_outputs[j]
+                    per_head_outputs = per_head_outputs_list[j]
+                    
+                    # Store attention output (no clone needed)
+                    attn_output_stored = attn_output.detach()
+                    
+                    # Add residual
+                    hidden_states_masked = residual + attn_output
+                    
+                    # MLP
+                    residual_mlp = hidden_states_masked
+                    hidden_states_mlp = layer.post_attention_layernorm(hidden_states_masked)
+                    hidden_states_mlp = layer.mlp(hidden_states_mlp)
+                    hidden_states_mlp = residual_mlp + hidden_states_mlp
+                    
+                    # Store output from layer (no clone needed)
+                    resid_post = hidden_states_mlp.detach()
+                    
+                    results.append({
+                        'resid_pre': resid_pre,
+                        'resid_post': resid_post,
+                        'attn_output': attn_output_stored,
+                        'per_head_outputs': per_head_outputs,
+                    })
+                    
+                    # Clear intermediate tensors to free memory
+                    del attn_output, per_head_outputs, hidden_states_masked, hidden_states_mlp
+        
+        return results
+    
+    def _run_batched_attention(self, layer, hidden_states: torch.Tensor, attention_mask: torch.Tensor,
+                              position_ids: torch.Tensor, position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+                              mask_positions: List[int]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        """
+        Run batched attention computation with multiple token masks.
+        """
+        bsz, q_len, _ = hidden_states.size()
+        
+        # Get attention module
+        attn = layer.self_attn
+        
+        # Get number of heads from config
+        num_heads = self.model.config.text_config.num_attention_heads
+        num_key_value_heads = self.model.config.text_config.num_key_value_heads
+        head_dim = self.model.config.text_config.head_dim
+        
+        # Project Q, K, V (same for all masks)
+        query_states = attn.q_proj(hidden_states)
+        key_states = attn.k_proj(hidden_states)
+        value_states = attn.v_proj(hidden_states)
+        
+        # Reshape for multi-head attention
+        query_states = query_states.view(bsz, q_len, num_heads, head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+        
+        # Apply RoPE
+        cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+        
+        # Expand key/value states for GQA if needed
+        if num_key_value_heads != num_heads:
+            key_states = repeat_kv(key_states, num_heads // num_key_value_heads)
+            value_states = repeat_kv(value_states, num_heads // num_key_value_heads)
+        
+        # Compute attention scores (same for all masks)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / np.sqrt(head_dim)
+        
+        # Apply causal mask
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
+        
+        # Process tokens one by one to avoid memory explosion
+        # (The "batching" is just processing multiple tokens in the same function call)
+        attn_outputs = []
+        per_head_outputs_list = []
+        
+        for mask_position in mask_positions:
+            # Apply token masking (set specific position to -inf)
+            mask_value = torch.finfo(attn_weights.dtype).min
+            attn_weights_masked = attn_weights.clone()
+            attn_weights_masked[:, :, :, mask_position] = mask_value
+            
+            # Softmax
+            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            
+            # Apply dropout (but we're in eval mode so this is a no-op)
+            attn_weights_masked = F.dropout(attn_weights_masked, p=0.0, training=False)
+            
+            # Compute attention output
+            attn_output = torch.matmul(attn_weights_masked, value_states)
+            
+            # Store per-head outputs before combining
+            per_head_outputs = attn_output.detach()
+            
+            # Reshape and project
+            attn_output = attn_output.transpose(1, 2).contiguous()
+            attn_output = attn_output.reshape(bsz, q_len, num_heads * head_dim)
+            attn_output = attn.o_proj(attn_output)
+            
+            attn_outputs.append(attn_output)
+            per_head_outputs_list.append(per_head_outputs)
+            
+            # Immediately free memory
+            del attn_weights_masked, attn_output, per_head_outputs
+        
+        return attn_outputs, per_head_outputs_list
 
 
 def apply_rotary_pos_emb(q, k, cos, sin):
@@ -243,14 +390,74 @@ def load_config(config_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def resize_image_if_needed(image_path: str, max_resolution: Optional[int] = None) -> str:
+    """
+    Resize image if it exceeds max_resolution, keeping aspect ratio.
+    Returns the path to the resized image (or original if no resize needed).
+    """
+    if max_resolution is None:
+        return image_path
+    
+    from PIL import Image
+    import os
+    
+    # Load image
+    image = Image.open(image_path)
+    original_size = image.size
+    max_dim = max(original_size)
+    
+    if max_dim <= max_resolution:
+        return image_path  # No resize needed
+    
+    # Calculate new size maintaining aspect ratio
+    scale_factor = max_resolution / max_dim
+    new_size = (int(original_size[0] * scale_factor), int(original_size[1] * scale_factor))
+    
+    # Resize image
+    resized_image = image.resize(new_size, Image.Resampling.LANCZOS)
+    
+    # Save resized image
+    base_name = os.path.splitext(image_path)[0]
+    extension = os.path.splitext(image_path)[1]
+    resized_path = f"{base_name}_resized_{max_resolution}{extension}"
+    
+    resized_image.save(resized_path)
+    print(f"  📐 Resized image from {original_size} to {new_size} (max: {max_resolution})")
+    print(f"  💾 Saved resized image: {resized_path}")
+    
+    return resized_path
+
+
 def process_chatml_prompt(prompt: str, image_path: Optional[str] = None) -> List[Dict]:
     """
     Process ChatML format prompt according to Qwen3-VL official spec.
     Returns the content list in the format expected by Qwen3-VL.
     """
     if image_path and '<image>' in prompt:
-        # Remove the <image> placeholder and create proper content structure
-        processed_prompt = prompt.replace('<image>', '').strip()
+        # Parse ChatML format to extract just the user message content
+        lines = prompt.strip().split('\n')
+        
+        # Find user message content (between <|im_start|>user and <|im_end|>)
+        user_content_lines = []
+        in_user_message = False
+        
+        for line in lines:
+            if line.strip() == '<|im_start|>user':
+                in_user_message = True
+                continue
+            elif '<|im_end|>' in line and in_user_message:
+                break
+            elif in_user_message:
+                # Skip the <image> placeholder but keep other content
+                if '<image>' in line:
+                    continue
+                user_content_lines.append(line)
+            # Stop if we hit the assistant section
+            elif line.strip() == '<|im_start|>assistant':
+                break
+        
+        # Join user content and clean up
+        user_content = '\n'.join(user_content_lines).strip()
         
         # Create content in the official Qwen3-VL format
         content = [
@@ -260,13 +467,30 @@ def process_chatml_prompt(prompt: str, image_path: Optional[str] = None) -> List
             },
             {
                 "type": "text", 
-                "text": processed_prompt
+                "text": user_content
             }
         ]
         return content
     else:
-        # Text-only content
-        return [{"type": "text", "text": prompt}]
+        # For text-only, parse ChatML to extract just the user message
+        lines = prompt.strip().split('\n')
+        user_content_lines = []
+        in_user_message = False
+        
+        for line in lines:
+            if line.strip() == '<|im_start|>user':
+                in_user_message = True
+                continue
+            elif '<|im_end|>' in line and in_user_message:
+                break
+            elif in_user_message:
+                user_content_lines.append(line)
+            # Stop if we hit the assistant section
+            elif line.strip() == '<|im_start|>assistant':
+                break
+        
+        user_content = '\n'.join(user_content_lines).strip()
+        return [{"type": "text", "text": user_content}]
 
 
 def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int]], device: str, dtype: torch.dtype = torch.float32) -> torch.Tensor:
@@ -301,12 +525,15 @@ def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int
 
 def run_vl_masking_experiment(
     prompt: str,
-    model_path: str = "Qwen/Qwen3-VL-4B-Instruct",
+    model: Optional[object] = None,
+    processor: Optional[object] = None,
     device: str = 'cpu',
     num_output_tokens: int = 1,
     image_path: Optional[str] = None,
     mask_mode: str = 'text',
-    use_chatml_format: bool = False
+    use_chatml_format: bool = False,
+    max_image_resolution: Optional[int] = None,
+    batch_size: int = 8
 ) -> pd.DataFrame:
     """
     Run the complete VL masking experiment
@@ -333,31 +560,11 @@ def run_vl_masking_experiment(
     print(f"{phase} Masking Analysis")
     print(f"{'='*70}\n")
     
-    # Load model and processor
-    print(f"Loading Qwen3-VL model from: {model_path}")
-    print(f"Loading model on {device}...")
+    # Use provided model and processor (loaded externally for efficiency)
+    if model is None or processor is None:
+        raise ValueError("Model and processor must be provided for efficient processing")
     
-    # Simple loading like the text-only version - just load and move to device
-    # Using float32 for CPU ensures full compatibility and proper RAM loading
-    if device == 'cpu':
-        # CPU: Use float32 for better compatibility and ensure full loading
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.float32
-        )
-    else:
-        # GPU: Can use bfloat16 for speed
-        model = Qwen3VLForConditionalGeneration.from_pretrained(
-            model_path,
-            torch_dtype=torch.bfloat16
-        )
-    
-    model = model.to(device)
-    print(f"✓ Model loaded successfully on {device}")
-    
-    processor = AutoProcessor.from_pretrained(model_path)
-    
-    print(f"Model loaded successfully!")
+    print(f"Using pre-loaded model on {device}")
     print(f"Text model layers: {len(model.model.language_model.layers)}")
     print(f"Hidden size: {model.config.text_config.hidden_size}")
     print(f"Attention heads: {model.config.text_config.num_attention_heads}")
@@ -367,12 +574,19 @@ def run_vl_masking_experiment(
         # Handle ChatML format from config using official Qwen3-VL spec
         if image_path:
             print(f"\nLoading image: {image_path}")
+            
+            # Resize image if needed
+            if max_image_resolution:
+                resized_image_path = resize_image_if_needed(image_path, max_image_resolution)
+            else:
+                resized_image_path = image_path
+            
             from PIL import Image
-            image = Image.open(image_path)
+            image = Image.open(resized_image_path)
             print(f"  Image size: {image.size}")
             
             # Process ChatML format prompt according to official spec
-            content = process_chatml_prompt(prompt, image_path)
+            content = process_chatml_prompt(prompt, resized_image_path)
         else:
             content = process_chatml_prompt(prompt, None)
         
@@ -390,9 +604,16 @@ def run_vl_masking_experiment(
         # Original format
         content = []
         if image_path:
-            from PIL import Image
             print(f"\nLoading image: {image_path}")
-            image = Image.open(image_path)
+            
+            # Resize image if needed
+            if max_image_resolution:
+                resized_image_path = resize_image_if_needed(image_path, max_image_resolution)
+            else:
+                resized_image_path = image_path
+            
+            from PIL import Image
+            image = Image.open(resized_image_path)
             print(f"  Image size: {image.size}")
             content.append({"type": "image", "image": image})
         
@@ -534,7 +755,7 @@ def run_vl_masking_experiment(
         
         with torch.no_grad():
             hidden_states = model.model.language_model.embed_tokens(current_input_ids)
-            batch_size, seq_length = current_input_ids.shape
+            tensor_batch_size, seq_length = current_input_ids.shape
             position_ids = torch.arange(seq_length, dtype=torch.long, device=device).unsqueeze(0)
             
             # Create proper attention mask (bidirectional for vision, causal for text)
@@ -580,6 +801,10 @@ def run_vl_masking_experiment(
         for layer_idx in range(num_layers):
             print(f"Processing layer {layer_idx}/{num_layers-1}...")
             
+            # Clear cache before each layer
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+            
             # Get final token position for this sequence
             final_pos = current_num_tokens - 1
             
@@ -592,8 +817,12 @@ def run_vl_masking_experiment(
                 position_embeddings
             )
             
-            # For each token position, mask it and measure impact
-            # Respect mask_mode: 'text', 'vision', or 'both'
+            # Clear cache after baseline
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            # Collect all tokens to mask based on mask_mode
+            tokens_to_mask = []
             for mask_pos in range(current_num_tokens):
                 is_vision_token = any(start <= mask_pos < end for start, end in vision_ranges)
                 
@@ -604,17 +833,73 @@ def run_vl_masking_experiment(
                     continue  # Skip text tokens in vision-only mode
                 # If mask_mode == 'both', don't skip anything
                 
-                token_str = current_tokens[mask_pos]
-                
-                # Run with masking
-                masked_activations = masker.run_masked_from_cache(
+                tokens_to_mask.append(mask_pos)
+            
+            print(f"  Processing {len(tokens_to_mask)} tokens in batches of {batch_size}...")
+            
+            # Run batched masking with memory management
+            import time
+            start_time = time.time()
+            
+            # Clear GPU cache before processing
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+                print(f"  📊 GPU memory before: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+            
+            # Ensure batch_size is at least 1
+            current_batch_size = max(1, batch_size)
+            
+            try:
+                batched_masked_activations = masker.run_batched_masked_from_cache(
                     cached_hidden_states[layer_idx],
                     layer_idx,
                     attention_mask,
                     position_ids,
                     position_embeddings,
-                    mask_position=mask_pos
+                    mask_positions=tokens_to_mask,
+                    batch_size=current_batch_size
                 )
+            except torch.cuda.OutOfMemoryError:
+                print(f"  ⚠️  CUDA OOM with batch_size={current_batch_size}, trying individual processing...")
+                torch.cuda.empty_cache()
+                
+                # Process tokens one by one if batching fails
+                batched_masked_activations = []
+                for mask_pos in tokens_to_mask:
+                    try:
+                        single_result = masker.run_masked_from_cache(
+                            cached_hidden_states[layer_idx],
+                            layer_idx,
+                            attention_mask,
+                            position_ids,
+                            position_embeddings,
+                            mask_position=mask_pos
+                        )
+                        batched_masked_activations.append(single_result)
+                        
+                        # Clear cache after each token
+                        if device == 'cuda':
+                            torch.cuda.empty_cache()
+                            
+                    except torch.cuda.OutOfMemoryError:
+                        print(f"  ❌ Still OOM even with individual processing. Skipping layer {layer_idx}")
+                        # Create dummy results to continue
+                        dummy_result = {
+                            'resid_pre': cached_hidden_states[layer_idx],
+                            'resid_post': cached_hidden_states[layer_idx],
+                            'attn_output': torch.zeros_like(cached_hidden_states[layer_idx]),
+                            'per_head_outputs': None
+                        }
+                        batched_masked_activations.append(dummy_result)
+            batch_time = time.time() - start_time
+            if device == 'cuda':
+                print(f"  📊 GPU memory after: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+            print(f"  ✓ Batched processing completed in {batch_time:.2f}s ({len(tokens_to_mask)/batch_time:.1f} tokens/sec)")
+            
+            # Process results
+            for i, mask_pos in enumerate(tokens_to_mask):
+                token_str = current_tokens[mask_pos]
+                masked_activations = batched_masked_activations[i]
                 
                 # Extract updates at final position
                 baseline_full = baseline_activations['resid_post'][0, final_pos, :] - baseline_activations['resid_pre'][0, final_pos, :]
@@ -798,6 +1083,8 @@ Examples:
     parser.add_argument('--model', type=str, default="Qwen/Qwen3-VL-4B-Instruct", help='Model path')
     parser.add_argument('--device', type=str, choices=['auto', 'cuda', 'cpu'], default='auto', help='Device to use')
     parser.add_argument('--config', type=str, help='Path to YAML config file (overrides other arguments)')
+    parser.add_argument('--max-image-resolution', type=int, help='Maximum image resolution (pixels). Images larger than this will be downscaled.')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size for token masking (reduce if CUDA OOM)')
     
     args = parser.parse_args()
     
@@ -810,6 +1097,10 @@ Examples:
         model_path = config.get('model', {}).get('path', args.model)
         device_arg = config.get('device', args.device)
         use_chatml_format = True  # Config format uses ChatML
+        
+        # Get global config values
+        global_max_resolution = config.get('max_image_resolution', args.max_image_resolution)
+        global_batch_size = config.get('batch_size', args.batch_size)
         
         # Process prompts from config
         prompts = config.get('prompts', [])
@@ -833,6 +1124,25 @@ Examples:
         
         print(f"Using device: {device}")
         
+        # Load model and processor once for all prompts (major performance improvement!)
+        print(f"\nLoading Qwen3-VL model from: {model_path}")
+        print(f"Loading model on {device}...")
+        
+        if device == 'cpu':
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.float32
+            )
+        else:
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                model_path,
+                torch_dtype=torch.bfloat16
+            )
+        
+        model = model.to(device)
+        processor = AutoProcessor.from_pretrained(model_path)
+        print(f"✓ Model loaded successfully on {device}")
+        
         # Process each enabled prompt
         all_results = []
         output_name = None  # Will be set from first prompt
@@ -849,27 +1159,52 @@ Examples:
             image_path = prompt_config.get('image_path')
             num_tokens = prompt_config.get('num_tokens', 1)
             mask_mode = prompt_config.get('mask_mode', 'text')
+            max_resolution = prompt_config.get('max_image_resolution', global_max_resolution)
+            batch_size = prompt_config.get('batch_size', global_batch_size)
             
             print(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
             if image_path:
                 print(f"Image: {image_path}")
             print(f"Tokens: {num_tokens}, Mask mode: {mask_mode}")
-            
+            print(f"Max resolution: {max_resolution}, Batch size: {batch_size}")
             # Run experiment with ChatML format
             df = run_vl_masking_experiment(
                 prompt,
-                model_path=model_path,
+                model=model,
+                processor=processor,
                 device=device,
                 num_output_tokens=num_tokens,
                 image_path=image_path,
                 mask_mode=mask_mode,
-                use_chatml_format=use_chatml_format
+                use_chatml_format=use_chatml_format,
+                max_image_resolution=max_resolution,
+                batch_size=batch_size
             )
             
             # Add prompt info to results
             df['prompt_name'] = prompt_config.get('name', f'prompt_{i+1}')
             df['config_prompt'] = prompt
             all_results.append(df)
+            
+            # Get prompt name for file naming
+            prompt_name = prompt_config.get('name', f'prompt_{i+1}')
+            
+            # Incremental save after each prompt (so you don't lose progress!)
+            print(f"\n💾 Saving results for prompt '{prompt_name}' ({i+1}/{len(enabled_prompts)})...")
+            temp_combined_df = pd.concat(all_results, ignore_index=True)
+            
+            # Create output directory if it doesn't exist
+            output_dir = Path('output')
+            output_dir.mkdir(exist_ok=True)
+            temp_csv_file = output_dir / f'{output_name}_{prompt_name}.csv'
+            temp_parquet_file = output_dir / f'{output_name}_{prompt_name}.parquet'
+            
+            temp_combined_df.to_csv(temp_csv_file, index=False)
+            temp_combined_df.to_parquet(temp_parquet_file, compression='snappy', index=False)
+            
+            print(f"  ✓ Saved: {temp_csv_file}")
+            print(f"  ✓ Saved: {temp_parquet_file}")
+            print(f"  📊 Total results so far: {len(temp_combined_df)} rows")
         
         # Combine all results
         import pandas as pd
@@ -906,15 +1241,37 @@ Examples:
                 print(f"Warning: prompt.txt not found, using default prompt")
                 prompt = "What is the capital of France?"
         
+        # Load model and processor once (for command line mode)
+        print(f"\nLoading Qwen3-VL model from: {args.model}")
+        print(f"Loading model on {device}...")
+        
+        if device == 'cpu':
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                args.model,
+                torch_dtype=torch.float32
+            )
+        else:
+            model = Qwen3VLForConditionalGeneration.from_pretrained(
+                args.model,
+                torch_dtype=torch.bfloat16
+            )
+        
+        model = model.to(device)
+        processor = AutoProcessor.from_pretrained(args.model)
+        print(f"✓ Model loaded successfully on {device}")
+        
         # Run experiment
         combined_df = run_vl_masking_experiment(
             prompt,
-            model_path=args.model,
+            model=model,
+            processor=processor,
             device=device,
             num_output_tokens=args.num_tokens,
             image_path=args.image,
             mask_mode=args.mask_mode,
-            use_chatml_format=False
+            use_chatml_format=False,
+            max_image_resolution=args.max_image_resolution,
+            batch_size=args.batch_size
         )
         # Use args.output for command line mode
         output_filename = args.output

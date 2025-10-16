@@ -1,0 +1,28 @@
+# Configuration file for Qwen3-VL batch prompt analysis
+# Phase 1: Text-only inputs (no images yet)
+#
+# Note: Generation automatically stops when the model outputs <|im_end|> or EOS token,
+#       so you can set num_tokens generously (e.g., 50) for short answers
+
+model:
+  # Path to the model (can be overridden with --model command line arg)
+  path: "Qwen/Qwen3-VL-4B-Instruct"
+  
+device: "auto"  # "auto", "cuda", or "cpu"
+
+# Global settings
+max_image_resolution: 768  # Downscale images larger than 512px (optional)
+batch_size: 8  # Reduce batch size to avoid CUDA OOM
+
+prompts:
+  # Example 1: Simple factual question
+  - name: "claude_describe"
+    enabled: true
+    prompt: |
+      <|im_start|>user
+      Briefly describe this image.
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "claude.jpg"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
