@@ -1,0 +1,190 @@
+# Configuration file for Qwen3-VL batch prompt analysis
+# Phase 1: Text-only inputs (no images yet)
+#
+# Note: Generation automatically stops when the model outputs <|im_end|> or EOS token,
+#       so you can set num_tokens generously (e.g., 50) for short answers
+
+model:
+  # Path to the model (can be overridden with --model command line arg)
+  path: "Qwen/Qwen3-VL-4B-Instruct"
+  
+device: "auto"  # "auto", "cuda", or "cpu"
+
+# Global settings
+#max_image_resolution: 768 # Downscale images larger than 1024px (optional)
+batch_size: 8  # Reduce batch size to avoid CUDA OOM
+
+prompts:
+  # Example 1: Simple factual question
+  - name: "dogcat"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/dogcat.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "dogcatsmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/dogcatsmall.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "lookright"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/lookright.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "lookrightsmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/lookrightsmall.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "picprefer"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/picprefer.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "picprefersmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/picprefersmall.png"
+    num_tokens: 50
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "scale"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/scale.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "scalesmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/scalesmall.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "whoisyoungest"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/whoisyoungest.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "whoisyoungestsmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/whoisyoungestsmall.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "tokens"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/tokens.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "color"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      What color is this image?
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/color.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "colormed"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      What color is this image?
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/colormed.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "colorsmall"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      What color is this image?
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/colorsmall.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "solarcost"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/solarcost.png"
+    num_tokens: 20
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "fontsize"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/fontsize.png"
+    num_tokens: 50
+    mask_mode: "all"  # Options: "text", "vision", or "all"
+
+  - name: "fda"
+    enabled: false
+    prompt: |
+      <|im_start|>user
+      <image><|im_end|>
+      <|im_start|>assistant
+    image_path: "images/fda.png"
+    num_tokens: 50
+    mask_mode: "all"  # Options: "text", "vision", or "all"

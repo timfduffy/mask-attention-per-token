@@ -181,7 +181,7 @@ prompts:
     enabled: true
     prompt: |
       <|im_start|>user
-      Do RL algorithms like GRPO use a more complicated algorithm than normal pretraining?<|im_end|>
+      Do RL algorithms like GRPO use a more complicated algorithm to update the weights than normal pretraining?<|im_end|>
       <|im_start|>assistant
     num_tokens: 40
 

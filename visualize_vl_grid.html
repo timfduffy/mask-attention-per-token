@@ -128,11 +128,54 @@
             border: 2px solid #666;
             object-fit: cover;
         }
+        /* When transparent mode is active */
         .image-token.transparent {
-            background-color: rgba(255, 255, 255, 0.3);
+            position: relative;
+            /* Store the background color in a CSS variable before clearing it */
+            /* Then clear the background so image shows through */
+            background: transparent !important;
         }
-        .image-token.transparent:hover {
-            background-color: rgba(255, 255, 255, 0.6);
+        /* Recreate the background color as a semi-transparent overlay */
+        .image-token.transparent.heatmap-0::before { background-color: rgba(255, 255, 255, 0.6); }
+        .image-token.transparent.heatmap-1::before { background-color: rgba(255, 245, 245, 0.6); }
+        .image-token.transparent.heatmap-2::before { background-color: rgba(255, 235, 235, 0.6); }
+        .image-token.transparent.heatmap-3::before { background-color: rgba(255, 224, 224, 0.6); }
+        .image-token.transparent.heatmap-4::before { background-color: rgba(255, 214, 214, 0.6); }
+        .image-token.transparent.heatmap-5::before { background-color: rgba(255, 204, 204, 0.6); }
+        .image-token.transparent.heatmap-6::before { background-color: rgba(255, 194, 194, 0.6); }
+        .image-token.transparent.heatmap-7::before { background-color: rgba(255, 184, 184, 0.6); }
+        .image-token.transparent.heatmap-8::before { background-color: rgba(255, 173, 173, 0.6); }
+        .image-token.transparent.heatmap-9::before { background-color: rgba(255, 163, 163, 0.6); }
+        .image-token.transparent.heatmap-10::before { background-color: rgba(255, 153, 153, 0.6); }
+        .image-token.transparent.heatmap-11::before { background-color: rgba(255, 143, 143, 0.6); }
+        .image-token.transparent.heatmap-12::before { background-color: rgba(255, 133, 133, 0.6); }
+        .image-token.transparent.heatmap-13::before { background-color: rgba(255, 122, 122, 0.6); }
+        .image-token.transparent.heatmap-14::before { background-color: rgba(255, 112, 112, 0.6); }
+        .image-token.transparent.heatmap-15::before { background-color: rgba(255, 102, 102, 0.6); }
+        .image-token.transparent.heatmap-16::before { background-color: rgba(255, 92, 92, 0.6); }
+        .image-token.transparent.heatmap-17::before { background-color: rgba(255, 82, 82, 0.6); }
+        .image-token.transparent.heatmap-18::before { background-color: rgba(255, 71, 71, 0.6); }
+        .image-token.transparent.heatmap-19::before { background-color: rgba(255, 61, 61, 0.6); }
+        .image-token.transparent.heatmap-20::before { background-color: rgba(255, 51, 51, 0.6); }
+        
+        .image-token.transparent::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 0;
+            pointer-events: none;
+        }
+        /* Ensure text stays on top and readable */
+        .image-token.transparent > * {
+            position: relative;
+            z-index: 1;
+            text-shadow: 0 0 3px rgba(255, 255, 255, 0.9), 0 0 5px rgba(255, 255, 255, 0.7);
+        }
+        .image-token.transparent:hover::before {
+            opacity: 0.85;
         }
         .image-token:hover {
             transform: scale(1.05);
@@ -528,17 +571,43 @@
             });
             
             // Detect grid dimensions for image tokens
-            // Prefer exact sqrt for perfect squares (256 -> 16, not 17)
-            const sqrtExact = Math.sqrt(imageTokens.length);
-            const gridSize = Number.isInteger(sqrtExact) ? sqrtExact : Math.ceil(sqrtExact);
+            const gridDims = findBestGrid(imageTokens.length);
             
-            console.log(`Image tokens: ${imageTokens.length}, Grid: ${gridSize}×${gridSize}`);
+            console.log(`Image tokens: ${imageTokens.length}, Grid: ${gridDims.width}×${gridDims.height}`);
             
             // Render visualization
-            renderVisualization(imageTokens, textTokens, gridSize);
+            renderVisualization(imageTokens, textTokens, gridDims);
         }
         
-        function renderVisualization(imageTokens, textTokens, gridSize) {
+        function findBestGrid(numTokens) {
+            const sqrtExact = Math.sqrt(numTokens);
+            
+            // Perfect square? Use it
+            if (Number.isInteger(sqrtExact)) {
+                return { width: sqrtExact, height: sqrtExact };
+            }
+            
+            // Find all factor pairs
+            const factors = [];
+            for (let i = 1; i <= Math.sqrt(numTokens) + 1; i++) {
+                if (numTokens % i === 0) {
+                    const j = Math.floor(numTokens / i);
+                    // Store as (width, height) with width >= height for landscape orientation
+                    factors.push({ width: j, height: i });
+                }
+            }
+            
+            // Prefer factors closest to square (minimal difference between width and height)
+            const best = factors.reduce((prev, curr) => {
+                const prevDiff = Math.abs(prev.width - prev.height);
+                const currDiff = Math.abs(curr.width - curr.height);
+                return currDiff < prevDiff ? curr : prev;
+            });
+            
+            return best;
+        }
+        
+        function renderVisualization(imageTokens, textTokens, gridDims) {
             const content = document.getElementById('content');
             
             // Get values for color scaling
@@ -564,7 +633,8 @@
             html += '<div class="stats">';
             html += `<div class="stat-item"><div class="stat-label">Max</div><div class="stat-value">${imageMax.toFixed(4)}</div></div>`;
             html += `<div class="stat-item"><div class="stat-label">Avg</div><div class="stat-value">${imageAvg.toFixed(4)}</div></div>`;
-            html += `<div class="stat-item"><div class="stat-label">Grid</div><div class="stat-value">${gridSize}×${gridSize}</div></div>`;
+            html += `<div class="stat-item"><div class="stat-label">Grid</div><div class="stat-value">${gridDims.width}×${gridDims.height}</div></div>`;
+            html += `<div class="stat-item"><div class="stat-label">Cells</div><div class="stat-value">${gridDims.width * gridDims.height}</div></div>`;
             html += '</div>';
             
             // Render image grid with optional background image
@@ -577,7 +647,7 @@
             
             // Grid overlay
             const transparentClass = (transparentGrid && loadedImage) ? ' transparent' : '';
-            html += `<div class="image-grid" style="grid-template-columns: repeat(${gridSize}, 1fr);">`;
+            html += `<div class="image-grid" style="grid-template-columns: repeat(${gridDims.width}, 1fr);">`;
             for (let i = 0; i < imageTokens.length; i++) {
                 const token = imageTokens[i];
                 const value = parseFloat(token[currentMetric]);

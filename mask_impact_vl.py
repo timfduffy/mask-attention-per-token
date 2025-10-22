@@ -1184,33 +1184,52 @@ Examples:
             # Add prompt info to results
             df['prompt_name'] = prompt_config.get('name', f'prompt_{i+1}')
             df['config_prompt'] = prompt
-            all_results.append(df)
             
             # Get prompt name for file naming
             prompt_name = prompt_config.get('name', f'prompt_{i+1}')
             
-            # Incremental save after each prompt (so you don't lose progress!)
+            # Save THIS PROMPT ONLY (not combined with previous prompts)
             print(f"\n💾 Saving results for prompt '{prompt_name}' ({i+1}/{len(enabled_prompts)})...")
-            temp_combined_df = pd.concat(all_results, ignore_index=True)
             
             # Create output directory if it doesn't exist
             output_dir = Path('output')
             output_dir.mkdir(exist_ok=True)
-            temp_csv_file = output_dir / f'{output_name}_{prompt_name}.csv'
-            temp_parquet_file = output_dir / f'{output_name}_{prompt_name}.parquet'
             
-            temp_combined_df.to_csv(temp_csv_file, index=False)
-            temp_combined_df.to_parquet(temp_parquet_file, compression='snappy', index=False)
+            # Save as separate file for this prompt only
+            csv_file = output_dir / f'{output_name}_{prompt_name}.csv'
+            parquet_file = output_dir / f'{output_name}_{prompt_name}.parquet'
             
-            print(f"  ✓ Saved: {temp_csv_file}")
-            print(f"  ✓ Saved: {temp_parquet_file}")
-            print(f"  📊 Total results so far: {len(temp_combined_df)} rows")
+            # Optimize dataframe for Parquet storage
+            df_optimized = df.copy()
+            
+            # Convert float columns to float32 (round to 4 decimal places)
+            for col in ['l2_distance', 'cosine_distance']:
+                if col in df_optimized.columns:
+                    df_optimized[col] = df_optimized[col].round(4).astype('float32')
+            
+            # Convert string columns to categorical for better compression
+            string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
+            for col in string_cols:
+                unique_ratio = df_optimized[col].nunique() / len(df_optimized)
+                if unique_ratio < 0.5:  # Only if less than 50% unique values
+                    df_optimized[col] = df_optimized[col].astype('category')
+            
+            # Save CSV and Parquet
+            df.to_csv(csv_file, index=False)
+            df_optimized.to_parquet(parquet_file, compression='snappy', index=False)
+            
+            csv_size = csv_file.stat().st_size
+            parquet_size = parquet_file.stat().st_size
+            
+            print(f"  ✓ Saved: {csv_file} ({csv_size/1024/1024:.2f} MB)")
+            print(f"  ✓ Saved: {parquet_file} ({parquet_size/1024/1024:.2f} MB)")
+            print(f"  📊 This prompt: {len(df)} rows")
         
-        # Combine all results
-        import pandas as pd
-        combined_df = pd.concat(all_results, ignore_index=True)
-        # Use the output name from config
-        output_filename = output_name
+        # No combined file - each prompt is saved separately
+        print(f"\n✓ All {len(enabled_prompts)} prompts saved as separate files")
+        # Don't save a combined file
+        combined_df = None
+        output_filename = None
         
     else:
         # Original command line processing
@@ -1276,51 +1295,51 @@ Examples:
         # Use args.output for command line mode
         output_filename = args.output
     
-    # Save to output files in output directory
-    
-    csv_file = output_dir / f'{output_filename}.csv'
-    parquet_file = output_dir / f'{output_filename}.parquet'
-    
-    # Optimize dataframe for Parquet storage
-    print(f"\nOptimizing data for storage...")
-    df_optimized = combined_df.copy()
-    
-    # Convert float columns to float32 (round to 4 decimal places)
-    for col in ['l2_distance', 'cosine_distance']:
-        if col in df_optimized.columns:
-            df_optimized[col] = df_optimized[col].round(4).astype('float32')
-            print(f"  Converted {col} to float32 (4 decimal precision)")
-    
-    # Convert string columns to categorical for better compression
-    string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
-    for col in string_cols:
-        unique_ratio = df_optimized[col].nunique() / len(df_optimized)
-        if unique_ratio < 0.5:  # Only if less than 50% unique values
-            df_optimized[col] = df_optimized[col].astype('category')
-            print(f"  Converted {col} to categorical ({df_optimized[col].nunique()} unique values)")
-    
-    # Save CSV (for spreadsheet compatibility)
-    print(f"\nSaving CSV...")
-    combined_df.to_csv(csv_file, index=False)
-    csv_size = csv_file.stat().st_size
-    
-    # Save Parquet (for fast web visualization)
-    print(f"Saving Parquet...")
-    df_optimized.to_parquet(parquet_file, compression='snappy', index=False)
-    parquet_size = parquet_file.stat().st_size
-    
-    # Format file sizes
-    def format_size(bytes):
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if bytes < 1024.0:
-                return f"{bytes:.2f} {unit}"
-            bytes /= 1024.0
-        return f"{bytes:.2f} TB"
-    
-    print(f"\nResults saved to:")
-    print(f"  - {csv_file} ({format_size(csv_size)}) - for spreadsheet analysis")
-    print(f"  - {parquet_file} ({format_size(parquet_size)}) - for web visualization")
-    print(f"\nStorage efficiency: Parquet is {(1 - parquet_size/csv_size)*100:.1f}% smaller than CSV")
-    print(f"\nFirst few rows:")
-    print(combined_df.head(20))
+    # Save to output files in output directory (only for command-line mode or single-prompt config)
+    if combined_df is not None and output_filename is not None:
+        csv_file = output_dir / f'{output_filename}.csv'
+        parquet_file = output_dir / f'{output_filename}.parquet'
+        
+        # Optimize dataframe for Parquet storage
+        print(f"\nOptimizing data for storage...")
+        df_optimized = combined_df.copy()
+        
+        # Convert float columns to float32 (round to 4 decimal places)
+        for col in ['l2_distance', 'cosine_distance']:
+            if col in df_optimized.columns:
+                df_optimized[col] = df_optimized[col].round(4).astype('float32')
+                print(f"  Converted {col} to float32 (4 decimal precision)")
+        
+        # Convert string columns to categorical for better compression
+        string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
+        for col in string_cols:
+            unique_ratio = df_optimized[col].nunique() / len(df_optimized)
+            if unique_ratio < 0.5:  # Only if less than 50% unique values
+                df_optimized[col] = df_optimized[col].astype('category')
+                print(f"  Converted {col} to categorical ({df_optimized[col].nunique()} unique values)")
+        
+        # Save CSV (for spreadsheet compatibility)
+        print(f"\nSaving CSV...")
+        combined_df.to_csv(csv_file, index=False)
+        csv_size = csv_file.stat().st_size
+        
+        # Save Parquet (for fast web visualization)
+        print(f"Saving Parquet...")
+        df_optimized.to_parquet(parquet_file, compression='snappy', index=False)
+        parquet_size = parquet_file.stat().st_size
+        
+        # Format file sizes
+        def format_size(bytes):
+            for unit in ['B', 'KB', 'MB', 'GB']:
+                if bytes < 1024.0:
+                    return f"{bytes:.2f} {unit}"
+                bytes /= 1024.0
+            return f"{bytes:.2f} TB"
+        
+        print(f"\nResults saved to:")
+        print(f"  - {csv_file} ({format_size(csv_size)}) - for spreadsheet analysis")
+        print(f"  - {parquet_file} ({format_size(parquet_size)}) - for web visualization")
+        print(f"\nStorage efficiency: Parquet is {(1 - parquet_size/csv_size)*100:.1f}% smaller than CSV")
+        print(f"\nFirst few rows:")
+        print(combined_df.head(20))
 
