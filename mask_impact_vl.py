@@ -533,7 +533,8 @@ def run_vl_masking_experiment(
     mask_mode: str = 'text',
     use_chatml_format: bool = False,
     max_image_resolution: Optional[int] = None,
-    batch_size: int = 8
+    batch_size: int = 8,
+    skip_per_head: bool = False
 ) -> pd.DataFrame:
     """
     Run the complete VL masking experiment
@@ -891,10 +892,14 @@ def run_vl_masking_experiment(
                             'per_head_outputs': None
                         }
                         batched_masked_activations.append(dummy_result)
+            
             batch_time = time.time() - start_time
             if device == 'cuda':
                 print(f"  📊 GPU memory after: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
             print(f"  ✓ Batched processing completed in {batch_time:.2f}s ({len(tokens_to_mask)/batch_time:.1f} tokens/sec)")
+            
+            # Time the post-processing separately
+            postprocess_start = time.time()
             
             # Process results
             for i, mask_pos in enumerate(tokens_to_mask):
@@ -932,17 +937,22 @@ def run_vl_masking_experiment(
                     generation_step=gen_step
                 ))
                 
-                # Variant 3: Per-head updates
-                if 'per_head_outputs' in masked_activations and 'per_head_outputs' in baseline_activations:
+                # Variant 3: Per-head updates (optimized with vectorized operations)
+                if not skip_per_head and 'per_head_outputs' in masked_activations and 'per_head_outputs' in baseline_activations:
                     baseline_heads = baseline_activations['per_head_outputs']
                     masked_heads = masked_activations['per_head_outputs']
                     
                     # Shape: [batch, num_heads, seq_len, head_dim]
                     num_heads = masked_heads.shape[1]
+                    
+                    # Extract all head outputs at final position at once for efficiency
+                    baseline_heads_final = baseline_heads[0, :, final_pos, :]  # [num_heads, head_dim]
+                    masked_heads_final = masked_heads[0, :, final_pos, :]  # [num_heads, head_dim]
+                    
+                    # Vectorized distance computation
                     for head_idx in range(num_heads):
-                        # Extract head output at final position for this specific head
-                        baseline_head = baseline_heads[0, head_idx, final_pos, :]  # [head_dim]
-                        masked_head = masked_heads[0, head_idx, final_pos, :]  # [head_dim]
+                        baseline_head = baseline_heads_final[head_idx, :]  # [head_dim]
+                        masked_head = masked_heads_final[head_idx, :]  # [head_dim]
                         
                         # Compute distances
                         l2_head, cos_head = compute_distances(baseline_head, masked_head)
@@ -955,6 +965,9 @@ def run_vl_masking_experiment(
                             cosine_distance=cos_head,
                             generation_step=gen_step
                         ))
+            
+            postprocess_time = time.time() - postprocess_start
+            print(f"  ✓ Post-processing completed in {postprocess_time:.2f}s")
     
     # Convert to DataFrame
     df = pd.DataFrame([
@@ -1066,6 +1079,9 @@ Examples:
   # Phase 2c: Image + text (masking both)
   python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --mask-mode both --num-tokens 1
   
+  # Skip per-head analysis for faster processing (32x fewer computations)
+  python mask_impact_vl.py --prompt "test" --skip-per-head
+  
   # From prompt file
   python mask_impact_vl.py --prompt prompt.txt --num-tokens 10
   
@@ -1085,6 +1101,7 @@ Examples:
     parser.add_argument('--config', type=str, help='Path to YAML config file (overrides other arguments)')
     parser.add_argument('--max-image-resolution', type=int, help='Maximum image resolution (pixels). Images larger than this will be downscaled.')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for token masking (reduce if CUDA OOM)')
+    parser.add_argument('--skip-per-head', action='store_true', help='Skip per-head analysis to speed up processing (32x fewer computations)')
     
     args = parser.parse_args()
     
@@ -1101,6 +1118,7 @@ Examples:
         # Get global config values
         global_max_resolution = config.get('max_image_resolution', args.max_image_resolution)
         global_batch_size = config.get('batch_size', args.batch_size)
+        global_skip_per_head = config.get('skip_per_head', args.skip_per_head)
         
         # Process prompts from config
         prompts = config.get('prompts', [])
@@ -1161,6 +1179,7 @@ Examples:
             mask_mode = prompt_config.get('mask_mode', 'text')
             max_resolution = prompt_config.get('max_image_resolution', global_max_resolution)
             batch_size = prompt_config.get('batch_size', global_batch_size)
+            skip_per_head = prompt_config.get('skip_per_head', global_skip_per_head)
             
             print(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
             if image_path:
@@ -1178,7 +1197,8 @@ Examples:
                 mask_mode=mask_mode,
                 use_chatml_format=use_chatml_format,
                 max_image_resolution=max_resolution,
-                batch_size=batch_size
+                batch_size=batch_size,
+                skip_per_head=skip_per_head
             )
             
             # Add prompt info to results
@@ -1290,7 +1310,8 @@ Examples:
             mask_mode=args.mask_mode,
             use_chatml_format=False,
             max_image_resolution=args.max_image_resolution,
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            skip_per_head=args.skip_per_head
         )
         # Use args.output for command line mode
         output_filename = args.output

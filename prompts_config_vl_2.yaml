@@ -12,12 +12,12 @@ device: "auto"  # "auto", "cuda", or "cpu"
 
 # Global settings
 #max_image_resolution: 768 # Downscale images larger than 1024px (optional)
-batch_size: 8  # Reduce batch size to avoid CUDA OOM
+batch_size: 64  # Reduce batch size to avoid CUDA OOM
 
 prompts:
   # Example 1: Simple factual question
   - name: "dogcat"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -27,7 +27,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "dogcatsmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -37,7 +37,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "lookright"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -47,7 +47,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "lookrightsmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -57,7 +57,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "picprefer"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -67,7 +67,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "picprefersmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -77,7 +77,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "scale"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -87,7 +87,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "scalesmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -97,7 +97,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "whoisyoungest"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -107,7 +107,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "whoisyoungestsmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -117,7 +117,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "tokens"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -127,7 +127,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "color"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       What color is this image?
@@ -138,7 +138,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "colormed"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       What color is this image?
@@ -149,7 +149,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "colorsmall"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       What color is this image?
@@ -160,7 +160,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "solarcost"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -170,7 +170,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "fontsize"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
@@ -180,7 +180,7 @@ prompts:
     mask_mode: "all"  # Options: "text", "vision", or "all"
 
   - name: "fda"
-    enabled: false
+    enabled: true
     prompt: |
       <|im_start|>user
       <image><|im_end|>
