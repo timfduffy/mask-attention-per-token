@@ -104,6 +104,8 @@ Both contain the same data in long format with the following columns:
 - `l2_distance`: L2 distance between baseline and masked updates
 - `cosine_distance`: Cosine distance (1 - cosine similarity)
 
+**Important**: Cosine distance values are typically **100-1000x smaller** than L2 distance. This is expected behavior - cosine distance measures angular difference (direction), while L2 measures magnitude difference. For tokens that don't significantly change the output, cosine distance may be < 0.0001 (rounds to 0 with 4 decimal precision). The data is saved with 6 decimal precision for cosine distance to preserve small values, but many values may still appear as 0 because the vectors are genuinely very similar (>99.99% similarity).
+
 **Note**: When `num_output_tokens > 1`, the analysis runs iteratively:
 - Step 0: Analyze initial prompt
 - Step 1: Generate 1st token, analyze full sequence (prompt + 1 token)

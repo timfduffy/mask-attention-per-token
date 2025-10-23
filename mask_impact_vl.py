@@ -1222,10 +1222,13 @@ Examples:
             # Optimize dataframe for Parquet storage
             df_optimized = df.copy()
             
-            # Convert float columns to float32 (round to 4 decimal places)
-            for col in ['l2_distance', 'cosine_distance']:
-                if col in df_optimized.columns:
-                    df_optimized[col] = df_optimized[col].round(4).astype('float32')
+            # Convert float columns to float32 with appropriate precision
+            # L2 distance: 4 decimals is sufficient
+            # Cosine distance: 6 decimals needed (values are much smaller, often < 0.01)
+            if 'l2_distance' in df_optimized.columns:
+                df_optimized['l2_distance'] = df_optimized['l2_distance'].round(4).astype('float32')
+            if 'cosine_distance' in df_optimized.columns:
+                df_optimized['cosine_distance'] = df_optimized['cosine_distance'].round(6).astype('float32')
             
             # Convert string columns to categorical for better compression
             string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
@@ -1325,11 +1328,15 @@ Examples:
         print(f"\nOptimizing data for storage...")
         df_optimized = combined_df.copy()
         
-        # Convert float columns to float32 (round to 4 decimal places)
-        for col in ['l2_distance', 'cosine_distance']:
-            if col in df_optimized.columns:
-                df_optimized[col] = df_optimized[col].round(4).astype('float32')
-                print(f"  Converted {col} to float32 (4 decimal precision)")
+        # Convert float columns to float32 with appropriate precision
+        # L2 distance: 4 decimals is sufficient
+        # Cosine distance: 6 decimals needed (values are much smaller, often < 0.01)
+        if 'l2_distance' in df_optimized.columns:
+            df_optimized['l2_distance'] = df_optimized['l2_distance'].round(4).astype('float32')
+            print(f"  Converted l2_distance to float32 (4 decimal precision)")
+        if 'cosine_distance' in df_optimized.columns:
+            df_optimized['cosine_distance'] = df_optimized['cosine_distance'].round(6).astype('float32')
+            print(f"  Converted cosine_distance to float32 (6 decimal precision)")
         
         # Convert string columns to categorical for better compression
         string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
