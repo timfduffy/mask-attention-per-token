@@ -189,7 +189,7 @@ class VLAttentionMasker:
             attn_weights[:, :, :, mask_position] = mask_value
         
         # Softmax
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.bfloat16).to(query_states.dtype)
         
         # Store attention weights for last position (position being predicted)
         # Shape: [bsz, num_heads, q_len, seq_len] -> [num_heads, seq_len]
@@ -338,7 +338,7 @@ class VLAttentionMasker:
             attn_weights_masked[:, :, :, mask_position] = mask_value
             
             # Softmax
-            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.bfloat16).to(query_states.dtype)
             
             # Store attention weights for last position (position being predicted)
             # Shape: [bsz, num_heads, q_len, seq_len] -> [num_heads, seq_len]
@@ -514,7 +514,7 @@ def process_chatml_prompt(prompt: str, image_path: Optional[str] = None) -> List
         return [{"type": "text", "text": user_content}]
 
 
-def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int]], device: str, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+def create_vl_attention_mask(seq_length: int, vision_ranges: List[Tuple[int, int]], device: str, dtype: torch.dtype = torch.bfloat16) -> torch.Tensor:
     """
     Create proper attention mask for VL models:
     - Vision tokens: bidirectional attention (can attend to each other)
@@ -1211,7 +1211,7 @@ Examples:
         if device == 'cpu':
             model = Qwen3VLForConditionalGeneration.from_pretrained(
                 model_path,
-                torch_dtype=torch.float32
+                torch_dtype=torch.bfloat16
             )
         else:
             model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -1352,7 +1352,7 @@ Examples:
         if device == 'cpu':
             model = Qwen3VLForConditionalGeneration.from_pretrained(
                 args.model,
-                torch_dtype=torch.float32
+                torch_dtype=torch.bfloat16
             )
         else:
             model = Qwen3VLForConditionalGeneration.from_pretrained(

@@ -6,7 +6,7 @@
 
 model:
   # Path to the model (can be overridden with --model command line arg)
-  path: "H:\\Models\\huggingface\\hub\\models--Qwen--Qwen3-4B-Instruct-2507\\snapshots\\cdbee75f17c01a7cc42f958dc650907174af0554"
+  path: "/workspace/.cache/huggingface/hub/models--Qwen--Qwen3-14B/snapshots/40c069824f4251a91eefaf281ebe4c544efd3e18"
   
 device: "auto"  # "auto", "cuda", or "cpu"
 

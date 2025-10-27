@@ -1,0 +1,22 @@
+# Core ML/DL frameworks
+torch>=2.0.0
+transformers>=4.40.0
+
+# Data processing and analysis
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Configuration and data formats
+pyyaml>=6.0
+pyarrow>=14.0.0
+
+# Image processing (for vision-language models)
+pillow>=10.0.0
+
+# HuggingFace utilities (faster model downloads)
+hf_transfer
+
+# Note: For CUDA support, install PyTorch with CUDA from https://pytorch.org/
+# Example for CUDA 11.8:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu118
+

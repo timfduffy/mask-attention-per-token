@@ -28,10 +28,40 @@ class AttentionMasker:
     """Handles masking tokens in attention computation and extracting activations"""
     
     def __init__(self, model, tokenizer, device='cpu'):
-        self.model = model.to(device)
         self.tokenizer = tokenizer
         self.device = device
+        
+        # Check if model is already distributed across devices
+        if hasattr(model, 'hf_device_map') and model.hf_device_map:
+            print(f"Model already distributed: {model.hf_device_map}")
+            self.model = model
+            # Update device to reflect actual GPU usage
+            if any('cuda' in str(d) for d in model.hf_device_map.values()):
+                self.device = 'cuda'
+        else:
+            # Move model to device carefully
+            try:
+                if device == 'cuda':
+                    print("Moving model to CUDA...")
+                    self.model = model.cuda()
+                    torch.cuda.empty_cache()
+                else:
+                    self.model = model
+            except Exception as e:
+                print(f"Error moving model to {device}: {e}")
+                print("Falling back to CPU...")
+                self.device = 'cpu'
+                self.model = model
+        
         self.model.eval()
+        
+        # Enable memory optimizations
+        if self.device == 'cuda':
+            # Enable gradient checkpointing to save memory
+            if hasattr(self.model, 'gradient_checkpointing_enable'):
+                self.model.gradient_checkpointing_enable()
+            # Clear cache
+            torch.cuda.empty_cache()
         
         # Storage for activations
         self.activations = {}
@@ -324,7 +354,7 @@ class AttentionMasker:
             attn_weights_masked[:, :, :, mask_position] = float('-inf')
             
             # Softmax
-            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.bfloat16).to(query_states.dtype)
             
             # Apply attention to values
             attn_output = torch.matmul(attn_weights_masked, value_states)
@@ -485,7 +515,7 @@ class AttentionMasker:
             attn_weights = attn_weights + attention_mask
         
         # Softmax
-        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.bfloat16).to(query_states.dtype)
         
         # Apply attention to values
         attn_output = torch.matmul(attn_weights, value_states)
@@ -562,7 +592,7 @@ def compute_distances(baseline: torch.Tensor, masked: torch.Tensor) -> Tuple[flo
 
 
 def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingface\hub\models--Qwen--Qwen3-4B-Instruct-2507\snapshots\cdbee75f17c01a7cc42f958dc650907174af0554",
-                          device: str = 'cpu', num_output_tokens: int = 1, batch_size: int = 8, skip_per_head: bool = False) -> pd.DataFrame:
+                          device: str = 'cpu', num_output_tokens: int = 1, batch_size: int = 4, skip_per_head: bool = False) -> pd.DataFrame:
     """
     Run the complete masking experiment.
     
@@ -579,12 +609,56 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
     """
     print(f"Loading model {model_name} on {device}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32)
+    
+    # Load model with memory optimizations for large models
+    if device == 'cuda':
+        try:
+            # Try to set CUDA device explicitly
+            torch.cuda.set_device(0)
+            torch.cuda.empty_cache()
+            
+            # Try loading with device_map first
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, 
+                torch_dtype=torch.bfloat16,
+                low_cpu_mem_usage=True,
+                device_map="auto"
+            )
+            print("Model loaded with device_map='auto'")
+        except Exception as e:
+            print(f"Failed to load with device_map: {e}")
+            print("Trying without device_map...")
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name, 
+                    torch_dtype=torch.bfloat16,
+                    low_cpu_mem_usage=True
+                )
+                print("Model loaded without device_map")
+            except Exception as e2:
+                print(f"Failed to load model: {e2}")
+                raise e2
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, 
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True
+        )
     
     masker = AttentionMasker(model, tokenizer, device=device)
     
     # Tokenize prompt
-    inputs = tokenizer(prompt, return_tensors='pt').to(device)
+    inputs = tokenizer(prompt, return_tensors='pt')
+    if device == 'cuda':
+        try:
+            inputs = inputs.to(device)
+        except Exception as e:
+            print(f"Error moving inputs to CUDA: {e}")
+            print("Using CPU for inputs...")
+            device = 'cpu'
+            inputs = inputs.to(device)
+    else:
+        inputs = inputs.to(device)
     input_ids = inputs['input_ids']
     
     # Decode tokens for reporting
@@ -949,7 +1023,7 @@ Examples:
     parser.add_argument('--output', type=str, default='masking_results', help='Output file basename (single prompt mode)')
     parser.add_argument('--model', type=str, help='Override model path')
     parser.add_argument('--device', type=str, choices=['auto', 'cuda', 'cpu'], default='auto', help='Device to use')
-    parser.add_argument('--batch-size', type=int, default=8, help='Batch size for token masking (reduce if CUDA OOM)')
+    parser.add_argument('--batch-size', type=int, default=4, help='Batch size for token masking (reduce if CUDA OOM)')
     parser.add_argument('--skip-per-head', action='store_true', help='Skip per-head analysis to speed up processing (32x fewer computations)')
     
     args = parser.parse_args()
