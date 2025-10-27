@@ -358,6 +358,38 @@ The viewer automatically detects grid size:
 - Uses hyparquet for Parquet parsing
 - No build step or dependencies needed
 
+## Attention Weight Visualization
+
+When enabled in the config with `save_attention_weights: true`, you can view raw attention weights instead of masking impact distances.
+
+### Attention Weight Variants
+
+**Per-Head Attention Weights (`AttentionWeight_Head_0`, `AttentionWeight_Head_1`, ...):**
+- Shows how much each individual attention head attends to each token
+- Values are probabilities (0.0 to 1.0) after softmax
+- Allows you to see which heads focus on which tokens
+- Each head can have different attention patterns
+
+**Averaged Attention Weight (`AttentionWeight_Avg`):**
+- Average attention weight across all heads
+- Gives an overall picture of token importance
+- Useful for identifying globally important tokens
+
+### Key Differences from Distance Metrics
+
+When viewing attention weight variants:
+- **Metric selector is disabled** - attention weights are not computed per distance metric
+- **Values are probabilities** (0.0 to 1.0), not distances
+- **Higher values = more attention**, unlike distances where lower can mean more similar
+- **Direct measurement** of attention, not impact of masking
+
+### Use Cases
+
+- **Visualize attention patterns**: See which image regions the model focuses on
+- **Per-head analysis**: Identify specialized heads (e.g., one head for edges, another for objects)
+- **Compare with masking impact**: Does high attention correlate with high masking impact?
+- **Debug model behavior**: Understand why the model made certain predictions
+
 ## Future Enhancements
 
 Possible improvements:
@@ -365,7 +397,6 @@ Possible improvements:
 - Compare two layers side-by-side
 - Animate through layers/steps
 - Export current view as image
-- Overlay image to see visual correspondence
 - 3D view (layers as depth dimension)
 
 ---

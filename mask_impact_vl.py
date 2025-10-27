@@ -27,6 +27,7 @@ class MaskingResult:
     l2_distance: float
     cosine_distance: float
     generation_step: int = 0  # Which output token is being predicted (0 = initial prompt)
+    attention_weight: Optional[float] = None  # Raw attention weight (for AttentionWeight variants)
 
 
 class VLAttentionMasker:
@@ -62,7 +63,7 @@ class VLAttentionMasker:
             hidden_states = layer.input_layernorm(hidden_states)
             
             # Run attention normally (no masking)
-            attn_output, per_head_outputs = self._run_attention(
+            attn_output, per_head_outputs, attn_weights = self._run_attention(
                 layer, hidden_states, attention_mask, position_ids, position_embeddings
             )
             
@@ -86,6 +87,7 @@ class VLAttentionMasker:
             'resid_post': resid_post,
             'attn_output': attn_output_stored,
             'per_head_outputs': per_head_outputs,
+            'attn_weights': attn_weights,  # [num_heads, seq_len]
         }
     
     def run_masked_from_cache(self, cached_hidden_states: torch.Tensor, layer_idx: int,
@@ -109,7 +111,7 @@ class VLAttentionMasker:
             hidden_states = layer.input_layernorm(hidden_states)
             
             # Run masked attention
-            attn_output, per_head_outputs = self._run_attention(
+            attn_output, per_head_outputs, attn_weights = self._run_attention(
                 layer, hidden_states, attention_mask, position_ids,
                 position_embeddings, mask_position=mask_position
             )
@@ -134,14 +136,16 @@ class VLAttentionMasker:
             'resid_post': resid_post,
             'attn_output': attn_output_stored,
             'per_head_outputs': per_head_outputs,
+            'attn_weights': attn_weights,  # [num_heads, seq_len]
         }
     
     def _run_attention(self, layer, hidden_states: torch.Tensor, attention_mask: torch.Tensor,
                       position_ids: torch.Tensor, position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-                      mask_position: Optional[int] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+                      mask_position: Optional[int] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
         """
         Run attention computation with optional token masking.
         Adapted for Qwen3-VL architecture with MRoPE.
+        Returns: (attn_output, per_head_outputs, attn_weights_last_pos)
         """
         bsz, q_len, _ = hidden_states.size()
         
@@ -187,6 +191,10 @@ class VLAttentionMasker:
         # Softmax
         attn_weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         
+        # Store attention weights for last position (position being predicted)
+        # Shape: [bsz, num_heads, q_len, seq_len] -> [num_heads, seq_len]
+        attn_weights_last = attn_weights[0, :, -1, :].detach().clone()  # [num_heads, seq_len]
+        
         # Apply dropout (but we're in eval mode so this is a no-op)
         attn_weights = F.dropout(attn_weights, p=0.0, training=False)
         
@@ -201,7 +209,7 @@ class VLAttentionMasker:
         attn_output = attn_output.reshape(bsz, q_len, num_heads * head_dim)
         attn_output = attn.o_proj(attn_output)
         
-        return attn_output, per_head_outputs
+        return attn_output, per_head_outputs, attn_weights_last
     
     def run_batched_masked_from_cache(self, cached_hidden_states: torch.Tensor, layer_idx: int,
                                      attention_mask: torch.Tensor, position_ids: torch.Tensor,
@@ -235,7 +243,7 @@ class VLAttentionMasker:
                 hidden_states = layer.input_layernorm(hidden_states)
                 
                 # Run batched masked attention
-                attn_outputs, per_head_outputs_list = self._run_batched_attention(
+                attn_outputs, per_head_outputs_list, attn_weights_list = self._run_batched_attention(
                     layer, hidden_states, attention_mask, position_ids,
                     position_embeddings, mask_positions=batch_positions
                 )
@@ -244,6 +252,7 @@ class VLAttentionMasker:
                 for j, mask_pos in enumerate(batch_positions):
                     attn_output = attn_outputs[j]
                     per_head_outputs = per_head_outputs_list[j]
+                    attn_weights = attn_weights_list[j]
                     
                     # Store attention output (no clone needed)
                     attn_output_stored = attn_output.detach()
@@ -265,18 +274,20 @@ class VLAttentionMasker:
                         'resid_post': resid_post,
                         'attn_output': attn_output_stored,
                         'per_head_outputs': per_head_outputs,
+                        'attn_weights': attn_weights,  # [num_heads, seq_len]
                     })
                     
                     # Clear intermediate tensors to free memory
-                    del attn_output, per_head_outputs, hidden_states_masked, hidden_states_mlp
+                    del attn_output, per_head_outputs, attn_weights, hidden_states_masked, hidden_states_mlp
         
         return results
     
     def _run_batched_attention(self, layer, hidden_states: torch.Tensor, attention_mask: torch.Tensor,
                               position_ids: torch.Tensor, position_embeddings: Tuple[torch.Tensor, torch.Tensor],
-                              mask_positions: List[int]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+                              mask_positions: List[int]) -> Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
         """
         Run batched attention computation with multiple token masks.
+        Returns: (attn_outputs, per_head_outputs_list, attn_weights_list)
         """
         bsz, q_len, _ = hidden_states.size()
         
@@ -318,6 +329,7 @@ class VLAttentionMasker:
         # (The "batching" is just processing multiple tokens in the same function call)
         attn_outputs = []
         per_head_outputs_list = []
+        attn_weights_list = []
         
         for mask_position in mask_positions:
             # Apply token masking (set specific position to -inf)
@@ -327,6 +339,10 @@ class VLAttentionMasker:
             
             # Softmax
             attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            
+            # Store attention weights for last position (position being predicted)
+            # Shape: [bsz, num_heads, q_len, seq_len] -> [num_heads, seq_len]
+            attn_weights_last = attn_weights_masked[0, :, -1, :].detach().clone()  # [num_heads, seq_len]
             
             # Apply dropout (but we're in eval mode so this is a no-op)
             attn_weights_masked = F.dropout(attn_weights_masked, p=0.0, training=False)
@@ -344,11 +360,12 @@ class VLAttentionMasker:
             
             attn_outputs.append(attn_output)
             per_head_outputs_list.append(per_head_outputs)
+            attn_weights_list.append(attn_weights_last)
             
             # Immediately free memory
-            del attn_weights_masked, attn_output, per_head_outputs
+            del attn_weights_masked, attn_output, per_head_outputs, attn_weights_last
         
-        return attn_outputs, per_head_outputs_list
+        return attn_outputs, per_head_outputs_list, attn_weights_list
 
 
 def apply_rotary_pos_emb(q, k, cos, sin):
@@ -374,6 +391,10 @@ def repeat_kv(hidden_states, n_rep):
 
 def compute_distances(baseline: torch.Tensor, masked: torch.Tensor) -> Tuple[float, float]:
     """Compute L2 and cosine distances between baseline and masked vectors"""
+    # Convert to float32 for full precision computation (in case model uses bfloat16)
+    baseline = baseline.float()
+    masked = masked.float()
+    
     # L2 distance
     l2_dist = torch.norm(baseline - masked).item()
     
@@ -534,7 +555,8 @@ def run_vl_masking_experiment(
     use_chatml_format: bool = False,
     max_image_resolution: Optional[int] = None,
     batch_size: int = 8,
-    skip_per_head: bool = False
+    skip_per_head: bool = False,
+    save_attention_weights: bool = False
 ) -> pd.DataFrame:
     """
     Run the complete VL masking experiment
@@ -965,6 +987,43 @@ def run_vl_masking_experiment(
                             cosine_distance=cos_head,
                             generation_step=gen_step
                         ))
+                
+                # Variant 4 & 5: Attention weights (when enabled)
+                if save_attention_weights and 'attn_weights' in masked_activations and 'attn_weights' in baseline_activations:
+                    # attn_weights shape: [num_heads, seq_len]
+                    # We want to know: how much does each head attend to the masked position?
+                    masked_attn_weights = masked_activations['attn_weights']  # [num_heads, seq_len]
+                    num_heads = masked_attn_weights.shape[0]
+                    
+                    # Per-head attention weights
+                    for head_idx in range(num_heads):
+                        # Attention weight from this head to the masked position
+                        attn_weight = masked_attn_weights[head_idx, mask_pos].item()
+                        
+                        results.append(MaskingResult(
+                            layer=layer_idx,
+                            token_masked=token_str,
+                            token_position=mask_pos,
+                            variant=f'AttentionWeight_Head_{head_idx}',
+                            l2_distance=attn_weight,  # Reuse l2_distance field for attention weight
+                            cosine_distance=0.0,  # Not applicable
+                            generation_step=gen_step,
+                            attention_weight=attn_weight
+                        ))
+                    
+                    # Averaged attention weight across all heads
+                    avg_attn_weight = masked_attn_weights[:, mask_pos].mean().item()
+                    
+                    results.append(MaskingResult(
+                        layer=layer_idx,
+                        token_masked=token_str,
+                        token_position=mask_pos,
+                        variant='AttentionWeight_Avg',
+                        l2_distance=avg_attn_weight,  # Reuse l2_distance field
+                        cosine_distance=0.0,  # Not applicable
+                        generation_step=gen_step,
+                        attention_weight=avg_attn_weight
+                    ))
             
             postprocess_time = time.time() - postprocess_start
             print(f"  ✓ Post-processing completed in {postprocess_time:.2f}s")
@@ -978,7 +1037,8 @@ def run_vl_masking_experiment(
             'token_position': r.token_position,
             'variant': r.variant,
             'l2_distance': r.l2_distance,
-            'cosine_distance': r.cosine_distance
+            'cosine_distance': r.cosine_distance,
+            'attention_weight': r.attention_weight
         }
         for r in results
     ])
@@ -1102,6 +1162,7 @@ Examples:
     parser.add_argument('--max-image-resolution', type=int, help='Maximum image resolution (pixels). Images larger than this will be downscaled.')
     parser.add_argument('--batch-size', type=int, default=8, help='Batch size for token masking (reduce if CUDA OOM)')
     parser.add_argument('--skip-per-head', action='store_true', help='Skip per-head analysis to speed up processing (32x fewer computations)')
+    parser.add_argument('--save-attention-weights', action='store_true', help='Save attention weights for visualization (per-head and averaged)')
     
     args = parser.parse_args()
     
@@ -1119,6 +1180,7 @@ Examples:
         global_max_resolution = config.get('max_image_resolution', args.max_image_resolution)
         global_batch_size = config.get('batch_size', args.batch_size)
         global_skip_per_head = config.get('skip_per_head', args.skip_per_head)
+        global_save_attention_weights = config.get('save_attention_weights', args.save_attention_weights)
         
         # Process prompts from config
         prompts = config.get('prompts', [])
@@ -1163,15 +1225,10 @@ Examples:
         
         # Process each enabled prompt
         all_results = []
-        output_name = None  # Will be set from first prompt
         for i, prompt_config in enumerate(enabled_prompts):
             print(f"\n{'='*70}")
             print(f"Processing prompt {i+1}/{len(enabled_prompts)}: {prompt_config.get('name', 'unnamed')}")
             print(f"{'='*70}")
-            
-            # Set output name from first prompt
-            if output_name is None:
-                output_name = prompt_config.get('name', 'unnamed')
             
             prompt = prompt_config['prompt']
             image_path = prompt_config.get('image_path')
@@ -1180,6 +1237,7 @@ Examples:
             max_resolution = prompt_config.get('max_image_resolution', global_max_resolution)
             batch_size = prompt_config.get('batch_size', global_batch_size)
             skip_per_head = prompt_config.get('skip_per_head', global_skip_per_head)
+            save_attention_weights = prompt_config.get('save_attention_weights', global_save_attention_weights)
             
             print(f"Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
             if image_path:
@@ -1198,7 +1256,8 @@ Examples:
                 use_chatml_format=use_chatml_format,
                 max_image_resolution=max_resolution,
                 batch_size=batch_size,
-                skip_per_head=skip_per_head
+                skip_per_head=skip_per_head,
+                save_attention_weights=save_attention_weights
             )
             
             # Add prompt info to results
@@ -1216,8 +1275,8 @@ Examples:
             output_dir.mkdir(exist_ok=True)
             
             # Save as separate file for this prompt only
-            csv_file = output_dir / f'{output_name}_{prompt_name}.csv'
-            parquet_file = output_dir / f'{output_name}_{prompt_name}.parquet'
+            csv_file = output_dir / f'{prompt_name}.csv'
+            parquet_file = output_dir / f'{prompt_name}.parquet'
             
             # Optimize dataframe for Parquet storage
             df_optimized = df.copy()
@@ -1229,6 +1288,9 @@ Examples:
                 df_optimized['l2_distance'] = df_optimized['l2_distance'].round(4).astype('float32')
             if 'cosine_distance' in df_optimized.columns:
                 df_optimized['cosine_distance'] = df_optimized['cosine_distance'].round(6).astype('float32')
+            if 'attention_weight' in df_optimized.columns:
+                # High precision for attention weights (can be small values like 0.001)
+                df_optimized['attention_weight'] = df_optimized['attention_weight'].astype('float32')
             
             # Convert string columns to categorical for better compression
             string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()
@@ -1314,7 +1376,8 @@ Examples:
             use_chatml_format=False,
             max_image_resolution=args.max_image_resolution,
             batch_size=args.batch_size,
-            skip_per_head=args.skip_per_head
+            skip_per_head=args.skip_per_head,
+            save_attention_weights=args.save_attention_weights
         )
         # Use args.output for command line mode
         output_filename = args.output
@@ -1337,6 +1400,9 @@ Examples:
         if 'cosine_distance' in df_optimized.columns:
             df_optimized['cosine_distance'] = df_optimized['cosine_distance'].round(6).astype('float32')
             print(f"  Converted cosine_distance to float32 (6 decimal precision)")
+        if 'attention_weight' in df_optimized.columns:
+            df_optimized['attention_weight'] = df_optimized['attention_weight'].astype('float32')
+            print(f"  Converted attention_weight to float32 (full precision)")
         
         # Convert string columns to categorical for better compression
         string_cols = df_optimized.select_dtypes(include=['object']).columns.tolist()

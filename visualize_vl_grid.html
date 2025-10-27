@@ -522,6 +522,19 @@
         function render() {
             if (data.length === 0) return;
             
+            // Check if we're displaying attention weights
+            const isAttentionWeight = currentVariant.startsWith('AttentionWeight_');
+            
+            // Disable/enable metric selector for attention weight variants
+            const metricSelect = document.getElementById('metricSelect');
+            metricSelect.disabled = isAttentionWeight;
+            if (isAttentionWeight) {
+                document.getElementById('metricBadge').textContent = 'Attention Weight';
+            } else {
+                document.getElementById('metricBadge').textContent = 
+                    currentMetric === 'l2_distance' ? 'L2 Distance' : 'Cosine Distance';
+            }
+            
             // Update info display
             document.getElementById('currentLayer').textContent = layers[currentLayer];
             document.getElementById('totalLayers').textContent = layers[layers.length - 1];
@@ -610,9 +623,13 @@
         function renderVisualization(imageTokens, textTokens, gridDims) {
             const content = document.getElementById('content');
             
+            // Check if we're displaying attention weights
+            const isAttentionWeight = currentVariant.startsWith('AttentionWeight_');
+            const valueField = isAttentionWeight ? 'attention_weight' : currentMetric;
+            
             // Get values for color scaling
-            const imageValues = imageTokens.map(t => parseFloat(t[currentMetric])).filter(v => !isNaN(v));
-            const textValues = textTokens.map(t => parseFloat(t[currentMetric])).filter(v => !isNaN(v));
+            const imageValues = imageTokens.map(t => parseFloat(t[valueField])).filter(v => !isNaN(v));
+            const textValues = textTokens.map(t => parseFloat(t[valueField])).filter(v => !isNaN(v));
             
             // Calculate max excluding first token if option is enabled
             const imageValuesForScale = excludeFirstImage && imageValues.length > 1 
@@ -650,7 +667,7 @@
             html += `<div class="image-grid" style="grid-template-columns: repeat(${gridDims.width}, 1fr);">`;
             for (let i = 0; i < imageTokens.length; i++) {
                 const token = imageTokens[i];
-                const value = parseFloat(token[currentMetric]);
+                const value = parseFloat(token[valueField]);
                 const heatmapClass = getHeatmapClass(value, imageMax, imageValuesForScale);
                 
                 html += `<div class="image-token ${heatmapClass}${transparentClass}" title="${token.token_masked}: ${value.toFixed(4)}">`;
@@ -673,7 +690,7 @@
             // Render text tokens
             html += '<div class="text-tokens">';
             for (const token of textTokens) {
-                const value = parseFloat(token[currentMetric]);
+                const value = parseFloat(token[valueField]);
                 const heatmapClass = getHeatmapClass(value, textMax, textValues);
                 
                 let displayToken = token.token_masked;

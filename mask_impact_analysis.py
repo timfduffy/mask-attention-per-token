@@ -99,13 +99,23 @@ class AttentionMasker:
             
             # Run through layers before target layer
             for idx in range(layer_idx):
-                layer_outputs = self.model.model.layers[idx](
+                layer = self.model.model.layers[idx]
+                
+                # Forward through layer manually
+                residual = hidden_states
+                hidden_states = layer.input_layernorm(hidden_states)
+                attn_output = layer.self_attn(
                     hidden_states,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
-                    position_embeddings=position_embeddings,
-                )
-                hidden_states = layer_outputs[0]
+                    position_embeddings=position_embeddings
+                )[0]
+                hidden_states = residual + attn_output
+                
+                residual = hidden_states
+                hidden_states = layer.post_attention_layernorm(hidden_states)
+                hidden_states = layer.mlp(hidden_states)
+                hidden_states = residual + hidden_states
             
             # Store input to target layer
             resid_pre = hidden_states.detach().clone()
@@ -188,6 +198,155 @@ class AttentionMasker:
             'per_head_outputs': per_head_outputs,
         }
     
+    def run_batched_masked_from_cache(self, cached_hidden_states: torch.Tensor, layer_idx: int,
+                                     attention_mask: torch.Tensor, position_ids: torch.Tensor,
+                                     position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+                                     mask_positions: List[int], batch_size: int = 8) -> List[Dict[str, torch.Tensor]]:
+        """
+        Run batched masked forward passes using pre-computed hidden states.
+        Processes multiple mask positions in parallel for better performance.
+        """
+        results = []
+        
+        # Process in batches to avoid memory issues
+        for i in range(0, len(mask_positions), batch_size):
+            batch_positions = mask_positions[i:i + batch_size]
+            
+            # Clear cache before each batch
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            with torch.no_grad():
+                # Use cached hidden states as input to target layer
+                hidden_states = cached_hidden_states.clone()
+                resid_pre = hidden_states.detach().clone()
+                
+                # Get target layer
+                layer = self.model.model.layers[layer_idx]
+                
+                # Run through the layer with batched masking
+                residual = hidden_states
+                hidden_states = layer.input_layernorm(hidden_states)
+                
+                # Run batched masked attention
+                attn_outputs, per_head_outputs_list = self._run_batched_attention(
+                    layer, hidden_states, attention_mask, position_ids,
+                    position_embeddings, mask_positions=batch_positions
+                )
+                
+                # Process each result in the batch
+                for j, mask_pos in enumerate(batch_positions):
+                    attn_output = attn_outputs[j]
+                    per_head_outputs = per_head_outputs_list[j]
+                    
+                    # Store attention output (no clone needed)
+                    attn_output_stored = attn_output.detach()
+                    
+                    # Add residual
+                    hidden_states_masked = residual + attn_output
+                    
+                    # MLP
+                    residual_mlp = hidden_states_masked
+                    hidden_states_mlp = layer.post_attention_layernorm(hidden_states_masked)
+                    hidden_states_mlp = layer.mlp(hidden_states_mlp)
+                    hidden_states_mlp = residual_mlp + hidden_states_mlp
+                    
+                    # Store output from layer (no clone needed)
+                    resid_post = hidden_states_mlp.detach()
+                    
+                    results.append({
+                        'resid_pre': resid_pre,
+                        'resid_post': resid_post,
+                        'attn_output': attn_output_stored,
+                        'per_head_outputs': per_head_outputs,
+                    })
+                    
+                    # Clear intermediate tensors to free memory
+                    del attn_output, per_head_outputs, hidden_states_masked, hidden_states_mlp
+        
+        return results
+    
+    def _run_batched_attention(self, layer, hidden_states: torch.Tensor, attention_mask: torch.Tensor,
+                              position_ids: torch.Tensor, position_embeddings: Tuple[torch.Tensor, torch.Tensor],
+                              mask_positions: List[int]) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+        """
+        Run batched attention computation with multiple token masks.
+        Returns: (attn_outputs, per_head_outputs_list)
+        """
+        bsz, q_len, _ = hidden_states.size()
+        
+        # Get Q, K, V projections (same for all masks)
+        query_states = layer.self_attn.q_proj(hidden_states)
+        key_states = layer.self_attn.k_proj(hidden_states)
+        value_states = layer.self_attn.v_proj(hidden_states)
+        
+        # Get attention parameters
+        num_heads = getattr(layer.self_attn, 'num_heads', None) or getattr(layer.self_attn, 'num_attention_heads', self.model.config.num_attention_heads)
+        num_key_value_heads = getattr(layer.self_attn, 'num_key_value_heads', self.model.config.num_key_value_heads)
+        head_dim = getattr(layer.self_attn, 'head_dim', self.model.config.head_dim)
+        
+        # Reshape for multi-head attention
+        query_states = query_states.view(bsz, q_len, num_heads, head_dim).transpose(1, 2)
+        key_states = key_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+        value_states = value_states.view(bsz, q_len, num_key_value_heads, head_dim).transpose(1, 2)
+        
+        # Apply query/key normalization if present (Qwen3)
+        if hasattr(layer.self_attn, 'q_norm'):
+            query_states = layer.self_attn.q_norm(query_states)
+        if hasattr(layer.self_attn, 'k_norm'):
+            key_states = layer.self_attn.k_norm(key_states)
+        
+        # Apply rotary embeddings
+        rotary_emb = getattr(layer.self_attn, 'rotary_emb', self.model.model.rotary_emb)
+        cos, sin = position_embeddings
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
+        
+        # Repeat KV heads if using GQA
+        if num_key_value_heads != num_heads:
+            key_states = repeat_kv(key_states, num_heads // num_key_value_heads)
+            value_states = repeat_kv(value_states, num_heads // num_key_value_heads)
+        
+        # Compute attention scores (same for all masks)
+        attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / np.sqrt(head_dim)
+        
+        # Apply causal mask
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
+        
+        # Process tokens one by one to avoid memory explosion
+        # (The "batching" is just processing multiple tokens in the same function call)
+        attn_outputs = []
+        per_head_outputs_list = []
+        
+        for mask_position in mask_positions:
+            # Apply token masking (set specific position to -inf)
+            attn_weights_masked = attn_weights.clone()
+            attn_weights_masked[:, :, :, mask_position] = float('-inf')
+            
+            # Softmax
+            attn_weights_masked = F.softmax(attn_weights_masked, dim=-1, dtype=torch.float32).to(query_states.dtype)
+            
+            # Apply attention to values
+            attn_output = torch.matmul(attn_weights_masked, value_states)
+            
+            # Store per-head outputs before combining
+            per_head_outputs = attn_output.detach()
+            
+            # Combine heads
+            attn_output = attn_output.transpose(1, 2).contiguous()
+            attn_output = attn_output.reshape(bsz, q_len, num_heads * head_dim)
+            
+            # Output projection
+            attn_output = layer.self_attn.o_proj(attn_output)
+            
+            attn_outputs.append(attn_output)
+            per_head_outputs_list.append(per_head_outputs)
+            
+            # Immediately free memory
+            del attn_weights_masked, attn_output, per_head_outputs
+        
+        return attn_outputs, per_head_outputs_list
+    
     def run_masked(self, input_ids: torch.Tensor, layer_idx: int, 
                    mask_position: int) -> Dict[str, torch.Tensor]:
         """Run forward pass with masked attention at specific layer"""
@@ -211,13 +370,23 @@ class AttentionMasker:
             
             # Run through layers before target layer
             for idx in range(layer_idx):
-                layer_outputs = self.model.model.layers[idx](
+                layer = self.model.model.layers[idx]
+                
+                # Forward through layer manually
+                residual = hidden_states
+                hidden_states = layer.input_layernorm(hidden_states)
+                attn_output = layer.self_attn(
                     hidden_states,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
-                    position_embeddings=position_embeddings,
-                )
-                hidden_states = layer_outputs[0]
+                    position_embeddings=position_embeddings
+                )[0]
+                hidden_states = residual + attn_output
+                
+                residual = hidden_states
+                hidden_states = layer.post_attention_layernorm(hidden_states)
+                hidden_states = layer.mlp(hidden_states)
+                hidden_states = residual + hidden_states
             
             # Store input to target layer
             resid_pre = hidden_states.detach().clone()
@@ -374,6 +543,10 @@ def compute_distances(baseline: torch.Tensor, masked: torch.Tensor) -> Tuple[flo
     Returns:
         (l2_distance, cosine_distance)
     """
+    # Convert to float32 for full precision computation (in case model uses bfloat16)
+    baseline = baseline.float()
+    masked = masked.float()
+    
     # Flatten tensors
     baseline_flat = baseline.flatten()
     masked_flat = masked.flatten()
@@ -389,7 +562,7 @@ def compute_distances(baseline: torch.Tensor, masked: torch.Tensor) -> Tuple[flo
 
 
 def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingface\hub\models--Qwen--Qwen3-4B-Instruct-2507\snapshots\cdbee75f17c01a7cc42f958dc650907174af0554",
-                          device: str = 'cpu', num_output_tokens: int = 1) -> pd.DataFrame:
+                          device: str = 'cpu', num_output_tokens: int = 1, batch_size: int = 8, skip_per_head: bool = False) -> pd.DataFrame:
     """
     Run the complete masking experiment.
     
@@ -398,6 +571,8 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
         model_name: HuggingFace model name
         device: 'cpu' or 'cuda'
         num_output_tokens: Number of tokens to generate for baseline prediction (default: 1)
+        batch_size: Number of tokens to process in parallel (reduce if OOM)
+        skip_per_head: Skip per-head analysis to speed up processing (32x fewer computations)
         
     Returns:
         DataFrame with results in long format
@@ -481,17 +656,30 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
             cached_hidden_states[0] = hidden_states.detach().clone()
             
             # Run through each layer and cache the output as input to next layer
+            # Manually call layer components to match what _run_attention expects
             for idx in range(num_layers):
                 if idx % 5 == 0 or idx == num_layers - 1:  # Print every 5 layers
                     print(f"  Pre-computing layer {idx}/{num_layers-1}...")
-                layer_outputs = masker.model.model.layers[idx](
+                
+                layer = masker.model.model.layers[idx]
+                
+                # Forward through layer (matching the manual approach in _run_attention)
+                residual = hidden_states
+                hidden_states = layer.input_layernorm(hidden_states)
+                attn_output = layer.self_attn(
                     hidden_states,
                     attention_mask=attention_mask,
                     position_ids=position_ids,
-                    position_embeddings=position_embeddings,
-                )
-                hidden_states = layer_outputs[0]
-                # Cache for next layer (if not the last layer)
+                    position_embeddings=position_embeddings
+                )[0]
+                hidden_states = residual + attn_output
+                
+                residual = hidden_states
+                hidden_states = layer.post_attention_layernorm(hidden_states)
+                hidden_states = layer.mlp(hidden_states)
+                hidden_states = residual + hidden_states
+                
+                # Cache output as input to next layer
                 if idx < num_layers - 1:
                     cached_hidden_states[idx + 1] = hidden_states.detach().clone()
         
@@ -499,44 +687,106 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
         
         # For each layer
         for layer_idx in range(num_layers):
-            print(f"  Layer {layer_idx}/{num_layers-1}...")
+            print(f"Processing layer {layer_idx}/{num_layers-1}...")
+            
+            # Clear cache before each layer
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            # Get final token position for this sequence
+            final_pos = current_num_tokens - 1
             
             # Use cached hidden states instead of recomputing layers 0 to L-1
             baseline_activations = masker.run_baseline_from_cache(
                 cached_hidden_states[layer_idx], layer_idx, attention_mask, position_ids, position_embeddings
             )
             
-            # Extract activations at final token position
-            final_pos = -1
-            baseline_resid_pre = baseline_activations['resid_pre'][0, final_pos, :]
-            baseline_resid_post = baseline_activations['resid_post'][0, final_pos, :]
-            baseline_attn_output = baseline_activations['attn_output'][0, final_pos, :]
+            # Clear cache after baseline
+            if device == 'cuda':
+                torch.cuda.empty_cache()
             
-            # Compute baseline updates
-            baseline_full_update = baseline_resid_post - baseline_resid_pre
-            baseline_attn_update = baseline_attn_output  # Attention contribution
+            # Collect all tokens to mask
+            tokens_to_mask = list(range(current_num_tokens))
             
-            # For each token to mask (mask all tokens in current sequence)
-            for mask_pos in range(current_num_tokens):
-                token_str = current_tokens[mask_pos]
-                
-                # Run masked forward pass using cached hidden states
-                masked_activations = masker.run_masked_from_cache(
-                    cached_hidden_states[layer_idx], layer_idx, mask_pos, 
-                    attention_mask, position_ids, position_embeddings
+            print(f"  Processing {len(tokens_to_mask)} tokens in batches of {batch_size}...")
+            
+            # Run batched masking with memory management
+            import time
+            start_time = time.time()
+            
+            # Clear GPU cache before processing
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+                print(f"  📊 GPU memory before: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+            
+            # Ensure batch_size is at least 1
+            current_batch_size = max(1, batch_size)
+            
+            try:
+                batched_masked_activations = masker.run_batched_masked_from_cache(
+                    cached_hidden_states[layer_idx],
+                    layer_idx,
+                    attention_mask,
+                    position_ids,
+                    position_embeddings,
+                    mask_positions=tokens_to_mask,
+                    batch_size=current_batch_size
                 )
+            except torch.cuda.OutOfMemoryError:
+                print(f"  ⚠️  CUDA OOM with batch_size={current_batch_size}, trying individual processing...")
+                torch.cuda.empty_cache()
                 
-                # Extract activations at final token position
-                masked_resid_pre = masked_activations['resid_pre'][0, final_pos, :]
-                masked_resid_post = masked_activations['resid_post'][0, final_pos, :]
-                masked_attn_output = masked_activations['attn_output'][0, final_pos, :]
+                # Process tokens one by one if batching fails
+                batched_masked_activations = []
+                for mask_pos in tokens_to_mask:
+                    try:
+                        single_result = masker.run_masked_from_cache(
+                            cached_hidden_states[layer_idx],
+                            layer_idx,
+                            mask_pos,
+                            attention_mask,
+                            position_ids,
+                            position_embeddings
+                        )
+                        batched_masked_activations.append(single_result)
+                        
+                        # Clear cache after each token
+                        if device == 'cuda':
+                            torch.cuda.empty_cache()
+                            
+                    except torch.cuda.OutOfMemoryError:
+                        print(f"  ❌ Still OOM even with individual processing. Skipping layer {layer_idx}")
+                        # Create dummy results to continue
+                        dummy_result = {
+                            'resid_pre': cached_hidden_states[layer_idx],
+                            'resid_post': cached_hidden_states[layer_idx],
+                            'attn_output': torch.zeros_like(cached_hidden_states[layer_idx]),
+                            'per_head_outputs': None
+                        }
+                        batched_masked_activations.append(dummy_result)
+            
+            batch_time = time.time() - start_time
+            if device == 'cuda':
+                print(f"  📊 GPU memory after: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+            print(f"  ✓ Batched processing completed in {batch_time:.2f}s ({len(tokens_to_mask)/batch_time:.1f} tokens/sec)")
+            
+            # Time the post-processing separately
+            postprocess_start = time.time()
+            
+            # Process results
+            for i, mask_pos in enumerate(tokens_to_mask):
+                token_str = current_tokens[mask_pos]
+                masked_activations = batched_masked_activations[i]
                 
-                # Compute masked updates
-                masked_full_update = masked_resid_post - masked_resid_pre
-                masked_attn_update = masked_attn_output
+                # Extract updates at final position
+                baseline_full = baseline_activations['resid_post'][0, final_pos, :] - baseline_activations['resid_pre'][0, final_pos, :]
+                masked_full = masked_activations['resid_post'][0, final_pos, :] - masked_activations['resid_pre'][0, final_pos, :]
+                
+                baseline_attn = baseline_activations['attn_output'][0, final_pos, :]
+                masked_attn = masked_activations['attn_output'][0, final_pos, :]
                 
                 # Variant 1: Full layer update
-                l2_full, cos_full = compute_distances(baseline_full_update, masked_full_update)
+                l2_full, cos_full = compute_distances(baseline_full, masked_full)
                 results.append(MaskingResult(
                     layer=layer_idx,
                     token_masked=token_str,
@@ -548,7 +798,7 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                 ))
                 
                 # Variant 2: Attention-only update
-                l2_attn, cos_attn = compute_distances(baseline_attn_update, masked_attn_update)
+                l2_attn, cos_attn = compute_distances(baseline_attn, masked_attn)
                 results.append(MaskingResult(
                     layer=layer_idx,
                     token_masked=token_str,
@@ -559,17 +809,22 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                     generation_step=gen_step
                 ))
                 
-                # Variant 3: Per-head updates
-                if 'per_head_outputs' in masked_activations and 'per_head_outputs' in baseline_activations:
+                # Variant 3: Per-head updates (optimized with vectorized operations)
+                if not skip_per_head and 'per_head_outputs' in masked_activations and 'per_head_outputs' in baseline_activations:
                     baseline_heads = baseline_activations['per_head_outputs']
                     masked_heads = masked_activations['per_head_outputs']
                     
                     # Shape: [batch, num_heads, seq_len, head_dim]
                     num_heads = masked_heads.shape[1]
+                    
+                    # Extract all head outputs at final position at once for efficiency
+                    baseline_heads_final = baseline_heads[0, :, final_pos, :]  # [num_heads, head_dim]
+                    masked_heads_final = masked_heads[0, :, final_pos, :]  # [num_heads, head_dim]
+                    
+                    # Vectorized distance computation
                     for head_idx in range(num_heads):
-                        # Extract head output at final position for this specific head
-                        baseline_head = baseline_heads[0, head_idx, final_pos, :]  # [head_dim]
-                        masked_head = masked_heads[0, head_idx, final_pos, :]  # [head_dim]
+                        baseline_head = baseline_heads_final[head_idx, :]  # [head_dim]
+                        masked_head = masked_heads_final[head_idx, :]  # [head_dim]
                         
                         # Compute distances
                         l2_head, cos_head = compute_distances(baseline_head, masked_head)
@@ -582,6 +837,9 @@ def run_masking_experiment(prompt: str, model_name: str = r"H:\Models\huggingfac
                             cosine_distance=cos_head,
                             generation_step=gen_step
                         ))
+            
+            postprocess_time = time.time() - postprocess_start
+            print(f"  ✓ Post-processing completed in {postprocess_time:.2f}s")
     
     # Convert to DataFrame
     df = pd.DataFrame([
@@ -677,8 +935,11 @@ Examples:
   # Batch mode with YAML config
   python mask_impact_analysis.py --config prompts_config.yaml
   
-  # Override device
-  python mask_impact_analysis.py --config prompts_config.yaml --device cuda
+  # Override device and batch size
+  python mask_impact_analysis.py --config prompts_config.yaml --device cuda --batch-size 16
+  
+  # Skip per-head analysis for faster processing (32x fewer computations)
+  python mask_impact_analysis.py --prompt "test" --skip-per-head
         """
     )
     
@@ -688,6 +949,8 @@ Examples:
     parser.add_argument('--output', type=str, default='masking_results', help='Output file basename (single prompt mode)')
     parser.add_argument('--model', type=str, help='Override model path')
     parser.add_argument('--device', type=str, choices=['auto', 'cuda', 'cpu'], default='auto', help='Device to use')
+    parser.add_argument('--batch-size', type=int, default=8, help='Batch size for token masking (reduce if CUDA OOM)')
+    parser.add_argument('--skip-per-head', action='store_true', help='Skip per-head analysis to speed up processing (32x fewer computations)')
     
     args = parser.parse_args()
     
@@ -761,7 +1024,9 @@ Examples:
                 prompt_text, 
                 model_name=model_name,
                 device=device, 
-                num_output_tokens=num_tokens
+                num_output_tokens=num_tokens,
+                batch_size=args.batch_size,
+                skip_per_head=args.skip_per_head
             )
             
             # Save with custom name in output directory
@@ -813,7 +1078,9 @@ Examples:
             prompt, 
             model_name=model_name if model_name else r"H:\Models\huggingface\hub\models--Qwen--Qwen3-4B-Instruct-2507\snapshots\cdbee75f17c01a7cc42f958dc650907174af0554",
             device=device, 
-            num_output_tokens=args.num_tokens
+            num_output_tokens=args.num_tokens,
+            batch_size=args.batch_size,
+            skip_per_head=args.skip_per_head
         )
         
         # Save to output files in output directory

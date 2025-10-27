@@ -1,6 +1,14 @@
 # Token Masking Impact Analysis
 
-Measure how masking individual tokens from attention K/V affects the residual stream updates at each layer.
+Measure how masking individual tokens from attention K/V affects the residual stream updates at each layer in transformer models (text-only and vision-language).
+
+## 📚 Documentation
+
+**Start here:**
+- **[MASK_IMPACT_GUIDE.md](MASK_IMPACT_GUIDE.md)** - Complete guide for text-only models
+- **[MASK_IMPACT_VL_GUIDE.md](MASK_IMPACT_VL_GUIDE.md)** - Complete guide for vision-language models
+- **[BATCH_MODE_GUIDE.md](BATCH_MODE_GUIDE.md)** - Batch processing with YAML configs
+- **[VL_GRID_VIEWER_GUIDE.md](VL_GRID_VIEWER_GUIDE.md)** - Vision-language grid visualization
 
 ## Overview
 
@@ -236,52 +244,66 @@ This analysis can reveal:
 - How attention vs MLP contributions differ
 - Which attention heads are most affected by specific tokens
 
-## Vision-Language Model Support (NEW! 🎉)
+## Vision-Language Model Support 🎉
 
-**Qwen3-VL Phase 2b** is now available - mask vision tokens to analyze image patches!
+Full support for vision-language models (Qwen3-VL) - mask text tokens, vision tokens, or both!
 
 ```bash
-# Phase 1: Text-only
+# Text-only
 python mask_impact_vl.py --prompt "What is the capital of France?" --num-tokens 5
 
-# Phase 2a: Image + text (masking text only)
-python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --num-tokens 5
+# Image + text (masking text only)
+python mask_impact_vl.py --image images/cat.jpg --prompt "What's in this image?" --num-tokens 5
 
-# Phase 2b: Image + text (masking vision tokens) - NEW!
-python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --mask-mode vision --num-tokens 3
+# Image + text (masking vision tokens)
+python mask_impact_vl.py --image images/cat.jpg --prompt "What's in this image?" --mask-mode vision --num-tokens 3
 
-# Phase 2c: Mask both text and vision
-python mask_impact_vl.py --image testimg.png --prompt "What's in this image?" --mask-mode both --num-tokens 1
-
-# Run test suite
-python test_vl_phase1.py
+# Mask both text and vision
+python mask_impact_vl.py --image images/cat.jpg --prompt "What's in this image?" --mask-mode both --num-tokens 1
 ```
 
-See [`VL_IMPLEMENTATION.md`](VL_IMPLEMENTATION.md) for:
-- Phase 1: Text-only analysis (✅ Complete)
-- Phase 2a: Image + text masking - text only (✅ Complete)
-- Phase 2b: Image + text masking - vision only (✅ Complete)
-- Phase 2c: Image + text masking - both (✅ Complete)
-- Phase 3: Vision encoder analysis (📋 Future)
+**See [MASK_IMPACT_VL_GUIDE.md](MASK_IMPACT_VL_GUIDE.md) for complete documentation.**
 
 ## Project Structure
 
 ```
 mask_impact/
+# Main scripts
 ├── mask_impact_analysis.py      # Text-only models (Qwen3, Llama, etc.)
-├── mask_impact_vl.py            # Vision-language models (Qwen3-VL Phase 1) 🆕
-├── prompts_config.yaml           # Batch mode for text models
-├── prompts_config_vl.yaml       # Batch mode for VL models (text-only) 🆕
-├── visualize_results.html        # Interactive results viewer (Parquet) 🆕
-├── visualize_vl_grid.html        # VL Grid viewer (2D image tokens) 🆕
-├── visualize_results_json.html   # Legacy viewer (JSON)
-├── BATCH_MODE_GUIDE.md          # Detailed batch mode documentation
-├── VL_IMPLEMENTATION.md         # VL-specific documentation 🆕
-├── test_vl_phase1.py            # VL test suite 🆕
-├── output/                       # All results saved here
+├── mask_impact_vl.py            # Vision-language models (Qwen3-VL)
+
+# Configuration
+├── prompts_config.yaml          # Batch config for text models
+├── prompts_config_vl.yaml       # Batch config for VL models
+├── prompts_config_vl_2.yaml     # Additional VL experiments
+├── config_QwenQwen3-VL-4B-Instruct.json  # Model-specific config
+
+# Visualization
+├── visualize_results.html       # Table viewer (Parquet/CSV)
+├── visualize_vl_grid.html       # VL Grid viewer (2D image tokens)
+├── visualize_results_json.html  # Legacy viewer (JSON)
+
+# Documentation
+├── README.md                    # This file
+├── MASK_IMPACT_GUIDE.md         # Text-only guide
+├── MASK_IMPACT_VL_GUIDE.md      # Vision-language guide
+├── BATCH_MODE_GUIDE.md          # Batch processing guide
+├── VL_GRID_VIEWER_GUIDE.md      # Grid viewer guide
+├── Qwen3-VL.md                  # Model architecture reference
+
+# Utilities
+├── create_sample_parquet.py     # Create test samples
+├── recompress_parquet_to_snappy.py  # Re-compress for browser
+├── fix_cosine_precision.py      # Fix existing files
+├── convert_to_parquet.py        # CSV → Parquet conversion
+
+# Output
+├── output/                      # All results saved here
 │   ├── {name}_results.csv       # For spreadsheets
-│   └── {name}_results.parquet   # For web visualization (99% smaller!) 🆕
-└── prompt.txt                    # Single prompt (optional)
+│   └── {name}_results.parquet   # For web visualization (99% smaller!)
+
+# Images
+└── images/                      # Test images for VL analysis
 ```
 
 ## Future Extensions

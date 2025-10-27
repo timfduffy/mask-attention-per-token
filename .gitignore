@@ -2,18 +2,11 @@
 *.csv
 *.json
 
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
+old_docs
+old_scripts
+output/old
 
-# Virtual environment
+__pycache__
+
 venv/
-env/
-ENV/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
